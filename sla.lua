@@ -1,2832 +1,1571 @@
 --[[
     ============================================================================
-    MOON ANIMATOR CLASSIC - INTERFACE (UI) COMPLETA
+    ANIMATION EDITOR - COMPLETO (UI + LÓGICA, MOBILE-READY)
     ============================================================================
-    Editor de Animações para Roblox - Apenas a Interface
-    Estilo visual: Moon Animator Clássico (2014-2016)
-    
-    INSTRUÇÕES:
-    1. Criar uma ScreenGui em StarterGui
-    2. Colocar este LocalScript dentro da ScreenGui
-    3. Conectar as funções do sistema de animação existente
+    Script ORIGINAL, único, rodando como LocalScript. Junta a interface e o
+    backend de animação num só lugar (sem precisar de _G para conectar as
+    duas partes), com:
+
+      - Detecção de rig via Motor6D + Acessórios
+      - Rotate / Move / Grow (crescer o personagem inteiro pelo Torso)
+      - Timeline com Keyframes/Poses, easing, undo/redo
+      - Mirror Pose, Insert/Remove Time, Duplicate Keyframe, Auto-Key, Onion
+        Skin, Zoom to Fit
+      - Salvar/Carregar no formato nativo do Roblox (KeyframeSequence)
+      - Suporte a toque: toolbar com scroll, painéis em gaveta, touchpad
+        virtual para as ferramentas, pinch-zoom na timeline
+
+    Instruções:
+      1) Cole este LocalScript dentro de uma ScreenGui em StarterGui (ou
+         carregue via loadstring dentro de uma ScreenGui já existente).
+      2) Chame Editor.init(workspace.SeuNPC) para escolher o que animar
+         (por padrão, tenta usar o personagem do próprio jogador).
     ============================================================================
 ]]
 
 -- ============================================================================
--- SEÇÃO 1: CONFIGURAÇÕES E CONSTANTES
+-- SERVIÇOS
 -- ============================================================================
 
-local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
+local Players         = game:GetService("Players")
+local RunService       = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
-local GuiService = game:GetService("GuiService")
-local TweenService = game:GetService("TweenService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local player = Players.LocalPlayer
+local player  = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
-local mouse = player:GetMouse()
+local mouse   = player:GetMouse()
+local camera  = workspace.CurrentCamera
 
--- Cores do estilo Moon Animator Clássico
+local IS_TOUCH = UserInputService.TouchEnabled and not UserInputService.MouseEnabled
+local IS_SMALL_SCREEN = camera.ViewportSize.X < 900
+
+-- ============================================================================
+-- CONFIG VISUAL
+-- ============================================================================
+
 local COLORS = {
-	Background = Color3.new(0.08, 0.08, 0.08),           -- Fundo principal
-	Panel = Color3.new(0.196, 0.196, 0.196),              -- Painéis
-	PanelDark = Color3.new(0.12, 0.12, 0.12),             -- Painéis escuros
-	ButtonOn = Color3.new(0.784, 0.784, 0.784),           -- Botão ativo
-	ButtonOff = Color3.new(0.196, 0.196, 0.196),          -- Botão inativo
-	ButtonHover = Color3.new(0.5, 0.5, 0.5),              -- Hover
-	ButtonPress = Color3.new(0.3, 0.3, 0.3),              -- Pressionado
-	Text = Color3.new(0.866, 0.866, 0.866),               -- Texto principal
-	TextDark = Color3.new(0.6, 0.6, 0.6),                 -- Texto secundário
-	Accent = Color3.new(0.2, 0.5, 1),                     -- Azul destaque
-	Cursor = Color3.new(1, 0.2, 0.2),                     -- Cursor vermelho
-	TimelineBg = Color3.new(0.082, 0.082, 0.082),         -- Fundo timeline
-	TimelineLine = Color3.new(0.784, 0.784, 0.784),       -- Linha timeline
-	TimelineGrid = Color3.new(0.15, 0.15, 0.15),          -- Grade timeline
-	Keyframe = Color3.new(0, 0.7, 0),                     -- Keyframe (verde)
-	KeyframeSelected = Color3.new(0.588, 0.588, 0.784),   -- Keyframe selecionado
-	SelectedLine = Color3.new(0.784, 0.784, 0.588),       -- Linha seleção
-	TitleBar = Color3.new(0.15, 0.15, 0.15),              -- Barra título
-	CloseButton = Color3.new(0.658, 0.133, 0.133),        -- Botão fechar
-	Separator = Color3.new(0.3, 0.3, 0.3),                -- Separadores
-	Border = Color3.new(0.345, 0.345, 0.345),             -- Bordas
-	TooltipBg = Color3.new(0.15, 0.15, 0.15),             -- Fundo tooltip
-	MenuBg = Color3.new(0.082, 0.082, 0.082),             -- Fundo menu
-	MenuItemBg = Color3.new(0.266, 0.266, 0.266),         -- Item menu
-	MenuItemHover = Color3.new(0.4, 0.4, 0.4),            -- Item menu hover
-	DialogBg = Color3.new(0.082, 0.082, 0.082),           -- Dialog
-	DialogButton = Color3.new(0.392, 0.392, 0.588),       -- Botão dialog
-	InputBg = Color3.new(0.392, 0.392, 0.392),            -- Input background
+	Background = Color3.new(0.08, 0.08, 0.08),
+	Panel = Color3.new(0.157, 0.157, 0.157),
+	PanelDark = Color3.new(0.11, 0.11, 0.11),
+	ButtonOn = Color3.new(0.85, 0.55, 0.15),      -- âmbar (ativo)
+	ButtonOff = Color3.new(0.196, 0.196, 0.196),
+	ButtonHover = Color3.new(0.32, 0.32, 0.32),
+	ButtonPress = Color3.new(0.45, 0.45, 0.45),
+	Text = Color3.new(0.92, 0.92, 0.92),
+	TextDark = Color3.new(0.6, 0.6, 0.6),
+	Accent = Color3.new(0.2, 0.75, 0.95),         -- ciano (cursor/seleção)
+	Keyframe = Color3.new(0.9, 0.6, 0.15),        -- âmbar
+	KeyframeSelected = Color3.new(0.2, 0.75, 0.95),
+	OnionPrev = Color3.new(0.2, 0.5, 1),
+	OnionNext = Color3.new(0.3, 0.9, 0.4),
+	TitleBar = Color3.new(0.12, 0.12, 0.12),
+	CloseButton = Color3.new(0.6, 0.2, 0.2),
+	Border = Color3.new(0.32, 0.32, 0.32),
+	InputBg = Color3.new(0.22, 0.22, 0.22),
+	DialogButton = Color3.new(0.3, 0.35, 0.5),
 }
 
--- Configurações de fonte
-local FONT_SETTINGS = {
-	TextLarge = Enum.FontSize.Size24,
-	TextMed = Enum.FontSize.Size18,
-	TextSmall = Enum.FontSize.Size14,
-	TextTiny = Enum.FontSize.Size10,
-	Font = Enum.Font.Arial,
-	FontBold = Enum.Font.ArialBold,
+local FONT = Enum.Font.Gotham
+local FONT_BOLD = Enum.Font.GothamBold
+local FONT_MONO = Enum.Font.Code
+
+-- Escala tudo um pouco maior no mobile pra facilitar o toque
+local SCALE = IS_TOUCH and 1.35 or 1
+local function px(n) return math.floor(n * SCALE) end
+
+local LAYOUT = {
+	TitleBarHeight = px(24),
+	ToolbarHeight = px(34),
+	PlaybackHeight = px(40),
+	LeftPanelWidth = IS_SMALL_SCREEN and px(0) or px(160),
+	RightPanelWidth = IS_SMALL_SCREEN and px(0) or px(200),
+	TimelineMinHeight = px(160),
+	TouchPadSize = px(140),
 }
 
--- Dimensões da janela
-local WINDOW = {
-	MinWidth = 600,
-	MinHeight = 400,
-	DefaultWidth = 1000,
-	DefaultHeight = 600,
-	TitleBarHeight = 22,
-	ToolbarHeight = 28,
-	PlaybackHeight = 32,
-	LeftPanelWidth = 160,
-	RightPanelWidth = 200,
-	TimelineHeight = 240,
-}
+-- ============================================================================
+-- ESTADO
+-- ============================================================================
 
--- Estados da UI
-local uiState = {
-	isPlaying = false,
-	isLooping = false,
+local State = {
+	-- edição
+	partList = {},          -- [Part] = PartNode
+	partToLineNumber = {},
+	partInclude = {},
+	keyframeList = {},       -- [time] = KeyframeData
+	selectedKeyframes = {},  -- [time] = true  (multi-seleção)
+	selectedKeyframe = nil,
+	copyPoseList = {},
+	undoStack = {},
+	redoStack = {},
+
+	-- animação
 	currentTime = 0,
 	animationLength = 2,
-	zoomLevel = 1,
-	selectedTool = "rotate", -- "rotate" ou "move"
-	selectedSpace = "local", -- "local" ou "world"
-	snapping = true,
-	interpolation = true,
-	selectedKeyframes = {},
-	selectedParts = {},
+	frameStep = 1/30,        -- segundos por frame
+	loopAnimation = false,
+	animationPriority = "Action",
+
+	-- ferramentas
+	currentTool = "rotate",  -- "rotate" | "move" | "grow"
+	currentSpace = "local",
+	snapEnabled = true,
+	interpolationEnabled = true,
 	rotateStep = 0,
 	moveStep = 0,
-	isDragging = false,
-	isResizing = false,
+	autoKey = false,
+	onionSkinEnabled = false,
+
+	-- seleção / rig
+	rigRoot = nil,
+	rootNode = nil,
+	selectedNode = nil,
+
+	-- runtime
+	playing = false,
+	stopAnim = false,
+	zoomLevel = 1,
 	modal = false,
-	tooltipVisible = false,
-	menuOpen = false,
 }
 
--- Referências aos elementos UI
-local ui = {
-	mainWindow = nil,
-	titleBar = nil,
-	toolbar = nil,
-	leftPanel = nil,
-	timelinePanel = nil,
-	playbackBar = nil,
-	rightPanel = nil,
-	statusBar = nil,
-	cursor = nil,
-	tooltip = nil,
-	contextMenu = nil,
-	dialogOverlay = nil,
-}
+local Editor = {} -- API pública, também acessível como Editor.xxx fora do script
 
 -- ============================================================================
--- SEÇÃO 2: FUNÇÃO MAKE() - CRIADOR DE INSTÂNCIAS
+-- UTILITÁRIOS
 -- ============================================================================
 
---[[
-	Make(className, properties)
-	Cria uma instância e aplica propriedades.
-	Propriedades numéricas (índices) são tratadas como filhos (Parent).
-]]
 local function Make(className, properties)
-	local instance = Instance.new(className)
+	local inst = Instance.new(className)
 	for key, value in pairs(properties) do
 		if type(key) == "number" then
-			value.Parent = instance
+			value.Parent = inst
 		else
-			instance[key] = value
+			inst[key] = value
 		end
 	end
-	return instance
+	return inst
 end
 
--- ============================================================================
--- SEÇÃO 3: UTILITÁRIOS DE UI
--- ============================================================================
+local function deepCopy(tbl)
+	if type(tbl) ~= "table" then return tbl end
+	local copy = {}
+	for k, v in pairs(tbl) do
+		copy[k] = (type(v) == "table") and deepCopy(v) or v
+	end
+	return copy
+end
 
---[[
-	Aplica estilo de botão clássico (sem UICorner, sem gradiente)
-]]
+local function round(n, step)
+	step = step or 1
+	if step <= 0 then return n end
+	return math.floor(n / step + 0.5) * step
+end
+
+local function clampTime(t)
+	t = math.clamp(t, 0, State.animationLength)
+	if State.snapEnabled then
+		t = round(t, State.frameStep)
+	end
+	return t
+end
+
 local function styleButton(button, isToggle)
 	button.BackgroundColor3 = COLORS.ButtonOff
 	button.BorderColor3 = COLORS.Border
 	button.BorderSizePixel = 1
-	button.BackgroundTransparency = 0
 	button.TextColor3 = COLORS.Text
-	button.Font = FONT_SETTINGS.Font
-	button.TextSize = 12
+	button.Font = FONT
+	button.TextSize = px(12)
 	button.AutoButtonColor = false
-	
-	local function updateVisual()
+
+	local function refresh()
 		if isToggle and button:GetAttribute("Selected") then
 			button.BackgroundColor3 = COLORS.ButtonOn
-			button.TextColor3 = Color3.new(0.1, 0.1, 0.1)
+			button.TextColor3 = Color3.new(0.05, 0.05, 0.05)
 		else
 			button.BackgroundColor3 = COLORS.ButtonOff
 			button.TextColor3 = COLORS.Text
 		end
 	end
-	
-	button.MouseEnter:Connect(function()
-		if not (isToggle and button:GetAttribute("Selected")) then
-			button.BackgroundColor3 = COLORS.ButtonHover
-		end
-	end)
-	
-	button.MouseLeave:Connect(function()
-		updateVisual()
-	end)
-	
-	button.MouseButton1Down:Connect(function()
-		button.BackgroundColor3 = COLORS.ButtonPress
-	end)
-	
-	button.MouseButton1Up:Connect(function()
-		updateVisual()
-	end)
-	
+	button.MouseEnter:Connect(function() if not (isToggle and button:GetAttribute("Selected")) then button.BackgroundColor3 = COLORS.ButtonHover end end)
+	button.MouseLeave:Connect(refresh)
+	button.MouseButton1Down:Connect(function() button.BackgroundColor3 = COLORS.ButtonPress end)
+	button.MouseButton1Up:Connect(refresh)
 	if isToggle then
 		button:SetAttribute("Selected", false)
-		button:GetAttributeChangedSignal("Selected"):Connect(updateVisual)
+		button:GetAttributeChangedSignal("Selected"):Connect(refresh)
 	end
-	
 	return button
 end
 
---[[
-	Cria um ícone simples usando TextLabel (sem imagens externas)
-]]
-local function createIcon(name, size)
-	local iconMap = {
-		["new"] = "+",
-		["open"] = "📂",
-		["save"] = "💾",
-		["export"] = "⬆",
-		["import"] = "⬇",
-		["play"] = "▶",
-		["pause"] = "⏸",
-		["stop"] = "⏹",
-		["loop"] = "🔄",
-		["undo"] = "↩",
-		["redo"] = "↪",
-		["rotate"] = "↻",
-		["move"] = "✥",
-		["scale"] = "⤢",
-		["local_space"] = "L",
-		["world_space"] = "W",
-		["snap"] = "⚲",
-		["interpolate"] = "~",
-		["mirror"] = "⇄",
-		["reset"] = "↺",
-		["bone_add"] = "+B",
-		["bone_remove"] = "-B",
-		["keyframe_add"] = "+K",
-		["keyframe_delete"] = "-K",
-		["keyframe_duplicate"] = "D",
-		["copy"] = "📋",
-		["paste"] = "📌",
-		["zoom_in"] = "+",
-		["zoom_out"] = "-",
-		["first_frame"] = "|◀",
-		["prev_frame"] = "◀",
-		["next_frame"] = "▶",
-		["last_frame"] = "▶|",
-		["settings"] = "⚙",
-		["close"] = "X",
-		["minimize"] = "_",
-		["maximize"] = "□",
+-- ============================================================================
+-- SEÇÃO 1: DETECÇÃO DO RIG
+-- ============================================================================
+
+local function isMotorLike(inst)
+	return inst:IsA("Motor6D") or inst:IsA("Weld") or inst:IsA("Motor")
+end
+
+local function buildNode(part, motor, parentNode)
+	local node = {
+		Part = part, Item = part, Motor = motor, Parent = parentNode,
+		Children = {}, IsAccessory = false,
+		OriginC0 = motor and motor.C0 or CFrame.new(),
+		OriginC1 = motor and motor.C1 or CFrame.new(),
+		OriginSize = part.Size,
 	}
-	
-	return Make("TextLabel", {
-		Name = name .. "Icon",
-		Text = iconMap[name] or "?",
-		Font = FONT_SETTINGS.FontBold,
-		TextSize = 10,
-		TextColor3 = COLORS.Text,
-		BackgroundTransparency = 1,
-		Size = UDim2.new(0, size, 0, size),
-		Position = UDim2.new(0.5, -size/2, 0.5, -size/2),
-		TextXAlignment = Enum.TextXAlignment.Center,
-		TextYAlignment = Enum.TextYAlignment.Center,
-	})
+	State.partList[part] = node
+	State.partInclude[part.Name] = true
+	return node
 end
 
--- ============================================================================
--- SEÇÃO 4: TOOLTIP SYSTEM
--- ============================================================================
-
-local function createTooltipSystem()
-	ui.tooltip = Make("Frame", {
-		Name = "Tooltip",
-		BackgroundColor3 = COLORS.TooltipBg,
-		BorderColor3 = COLORS.Border,
-		BorderSizePixel = 1,
-		Size = UDim2.new(0, 150, 0, 20),
-		Position = UDim2.new(0, 0, 0, 0),
-		Visible = false,
-		ZIndex = 100,
-		Make("TextLabel", {
-			Name = "TooltipText",
-			Font = FONT_SETTINGS.Font,
-			TextSize = 11,
-			TextColor3 = COLORS.Text,
-			BackgroundTransparency = 1,
-			Size = UDim2.new(1, -4, 1, 0),
-			Position = UDim2.new(0, 2, 0, 0),
-			TextXAlignment = Enum.TextXAlignment.Left,
-			TextYAlignment = Enum.TextYAlignment.Center,
-		})
-	})
-	ui.tooltip.Parent = ui.mainWindow
-end
-
-local function showTooltip(text, position)
-	if not ui.tooltip then return end
-	ui.tooltip.TooltipText.Text = text
-	ui.tooltip.Size = UDim2.new(0, #text * 7 + 10, 0, 20)
-	ui.tooltip.Position = UDim2.new(0, position.X + 15, 0, position.Y + 15)
-	ui.tooltip.Visible = true
-	uiState.tooltipVisible = true
-end
-
-local function hideTooltip()
-	if ui.tooltip then
-		ui.tooltip.Visible = false
-		uiState.tooltipVisible = false
+local function scanChildren(fromPart, node)
+	for _, d in ipairs(fromPart:GetDescendants()) do
+		if isMotorLike(d) and d.Part0 == fromPart then
+			local childPart = d.Part1
+			if childPart and childPart:IsA("BasePart") and not State.partList[childPart] then
+				local childNode = buildNode(childPart, d, node)
+				table.insert(node.Children, childNode)
+				scanChildren(childPart, childNode)
+			end
+		end
 	end
 end
 
-local function attachTooltip(element, text)
-	element.MouseEnter:Connect(function()
-		if text and text ~= "" then
-			showTooltip(text, Vector2.new(mouse.X, mouse.Y))
+local function attachAccessories(character)
+	for _, acc in ipairs(character:GetChildren()) do
+		if acc:IsA("Accessory") then
+			local handle = acc:FindFirstChild("Handle")
+			local weld = handle and (handle:FindFirstChildOfClass("Weld") or handle:FindFirstChildOfClass("Motor6D"))
+			if weld and weld.Part0 and State.partList[weld.Part0] then
+				local parentNode = State.partList[weld.Part0]
+				local accNode = buildNode(handle, weld, parentNode)
+				accNode.IsAccessory = true
+				table.insert(parentNode.Children, accNode)
+			end
 		end
-	end)
-	element.MouseLeave:Connect(function()
-		hideTooltip()
-	end)
-	element.MouseMoved:Connect(function()
-		if uiState.tooltipVisible then
-			showTooltip(text, Vector2.new(mouse.X, mouse.Y))
-		end
-	end)
+	end
+end
+
+function Editor.buildRig(character)
+	State.partList, State.partToLineNumber, State.partInclude = {}, {}, {}
+	local root = character:FindFirstChild("HumanoidRootPart") or character:FindFirstChild("Torso") or character:FindFirstChild("UpperTorso")
+	if not root then
+		warn("[AnimationEditor] Raiz não encontrada em " .. character:GetFullName())
+		return nil
+	end
+	State.rigRoot = character
+	local rootNode = buildNode(root, nil, nil)
+	State.rootNode = rootNode
+	scanChildren(root, rootNode)
+	attachAccessories(character)
+
+	local n = 0
+	local function assign(node)
+		n += 1
+		State.partToLineNumber[node.Part] = n
+		for _, c in ipairs(node.Children) do assign(c) end
+	end
+	assign(rootNode)
+	return rootNode
 end
 
 -- ============================================================================
--- SEÇÃO 5: MENU DE CONTEXTO
+-- SEÇÃO 2: SELEÇÃO
 -- ============================================================================
+
+local function raycastToPart(x, y)
+	local unitRay = camera:ViewportPointToRay(x, y)
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Include
+	params.FilterDescendantsInstances = { State.rigRoot }
+	local result = workspace:Raycast(unitRay.Origin, unitRay.Direction * 500, params)
+	return result and result.Instance and State.partList[result.Instance] or nil
+end
+
+local onSelectionChangedCallbacks = {}
+function Editor.onSelectionChanged(fn) table.insert(onSelectionChangedCallbacks, fn) end
+
+function Editor.select(node)
+	State.selectedNode = node
+	for _, fn in ipairs(onSelectionChangedCallbacks) do fn(node) end
+end
+
+function Editor.deselect()
+	State.selectedNode = nil
+	for _, fn in ipairs(onSelectionChangedCallbacks) do fn(nil) end
+end
+
+-- ============================================================================
+-- SEÇÃO 3: FERRAMENTAS (ROTATE / MOVE / GROW)
+-- ============================================================================
+
+function Editor.applyRotate(node, deltaDegreesY, deltaDegreesX)
+	if not node or not node.Motor then return end
+	deltaDegreesY = State.rotateStep > 0 and round(deltaDegreesY, State.rotateStep) or deltaDegreesY
+	node.Motor.C0 = node.Motor.C0 * CFrame.Angles(math.rad(deltaDegreesX or 0), math.rad(deltaDegreesY), 0)
+end
+
+function Editor.applyMove(node, deltaVector)
+	if not node or not node.Motor then return end
+	if State.moveStep > 0 then
+		deltaVector = Vector3.new(round(deltaVector.X, State.moveStep), round(deltaVector.Y, State.moveStep), round(deltaVector.Z, State.moveStep))
+	end
+	node.Motor.C0 = node.Motor.C0 * CFrame.new(deltaVector)
+end
+
+local function scaleRecursive(node, factor)
+	node.Part.Size = node.Part.Size * factor
+	for _, child in ipairs(node.Children) do
+		if child.Motor then
+			child.Motor.C0 = child.Motor.C0.Rotation + (child.Motor.C0.Position * factor)
+		end
+		scaleRecursive(child, factor)
+	end
+end
+
+function Editor.applyGrow(node, factor)
+	if not node or factor <= 0 then return end
+	if node == State.rootNode then
+		local centerCFrame = node.Part.CFrame
+		scaleRecursive(node, factor)
+		node.Part.CFrame = centerCFrame
+	else
+		scaleRecursive(node, factor)
+	end
+end
+
+function Editor.captureCurrentPoseToKeyframe()
+	local kf = State.keyframeList[clampTime(State.currentTime)] or Editor.createKeyframe(State.currentTime, true)
+	for part, _ in pairs(State.partList) do
+		Editor.capturePose(kf, part)
+	end
+end
+
+function Editor.onToolDrag(delta)
+	local node = State.selectedNode
+	if not node then return end
+	if State.currentTool == "rotate" then
+		if typeof(delta) == "Vector2" then
+			Editor.applyRotate(node, delta.X, delta.Y)
+		else
+			Editor.applyRotate(node, delta)
+		end
+	elseif State.currentTool == "move" then
+		Editor.applyMove(node, delta)
+	elseif State.currentTool == "grow" then
+		Editor.applyGrow(node, delta)
+	end
+
+	if State.autoKey then
+		Editor.captureCurrentPoseToKeyframe()
+	end
+	Editor.updateCursorPosition()
+end
+
+-- ============================================================================
+-- SEÇÃO 4: KEYFRAMES / POSES
+-- ============================================================================
+
+function Editor.getKeyframe(time)
+	return State.keyframeList[clampTime(time)]
+end
+
+function Editor.createKeyframe(time, shouldRegisterUndo)
+	if shouldRegisterUndo ~= false and time > 0 then
+		Editor.registerUndo({ action = "createKeyframe" })
+	end
+	local t = clampTime(time)
+	if State.keyframeList[t] then return State.keyframeList[t] end
+	local kf = { Time = t, Poses = {}, Name = "Keyframe" }
+	State.keyframeList[t] = kf
+	if t == 0 then
+		for part, _ in pairs(State.partList) do Editor.capturePose(kf, part) end
+	end
+	if State.onRefresh then State.onRefresh() end
+	return kf
+end
+
+function Editor.deleteKeyframe(time, shouldRegisterUndo)
+	if shouldRegisterUndo ~= false then Editor.registerUndo({ action = "deleteKeyframe" }) end
+	State.keyframeList[clampTime(time)] = nil
+	if State.onRefresh then State.onRefresh() end
+end
+
+function Editor.moveKeyframe(kf, newTime)
+	if not kf then return end
+	local t = clampTime(newTime)
+	if State.keyframeList[t] then return end
+	Editor.registerUndo({ action = "keyframeMove" })
+	State.keyframeList[kf.Time] = nil
+	kf.Time = t
+	State.keyframeList[t] = kf
+	State.currentTime = t
+	Editor.updateCursorPosition()
+	if State.onRefresh then State.onRefresh() end
+end
+
+function Editor.capturePose(kf, part)
+	local node = State.partList[part]
+	if not node or not node.Motor or not State.partInclude[part.Name] then return end
+	local relative = node.OriginC0:Inverse() * node.Motor.C0
+	local pose = kf.Poses[part]
+	if not pose then
+		pose = { CFrame = relative, Size = part.Size, EasingStyle = Enum.PoseEasingStyle.Linear, EasingDirection = Enum.PoseEasingDirection.Out }
+		kf.Poses[part] = pose
+	else
+		pose.CFrame, pose.Size = relative, part.Size
+	end
+	return pose
+end
+
+function Editor.deletePose(kf, part)
+	if not kf or not kf.Poses[part] then return end
+	Editor.registerUndo({ action = "deletePose" })
+	kf.Poses[part] = nil
+	Editor.updateCursorPosition()
+end
+
+function Editor.copyPose(partOrName, pose)
+	local name = typeof(partOrName) == "Instance" and partOrName.Name or partOrName
+	State.copyPoseList[name] = pose
+end
+
+function Editor.resetCopyPoseList() State.copyPoseList = {} end
+
+function Editor.pastePoses()
+	if next(State.copyPoseList) == nil then return end
+	Editor.registerUndo({ action = "pastePoses" })
+	local kf = Editor.getKeyframe(State.currentTime) or Editor.createKeyframe(State.currentTime, false)
+	for partName, pose in pairs(State.copyPoseList) do
+		for part, _ in pairs(State.partList) do
+			if part.Name == partName then kf.Poses[part] = deepCopy(pose) end
+		end
+	end
+	Editor.resetCopyPoseList()
+	Editor.updateCursorPosition()
+end
+
+function Editor.resetKeyframeToDefaultPose(kf)
+	if not kf then return end
+	for part, node in pairs(State.partList) do
+		kf.Poses[part] = { CFrame = CFrame.new(), Size = node.OriginSize, EasingStyle = Enum.PoseEasingStyle.Linear, EasingDirection = Enum.PoseEasingDirection.Out }
+	end
+	Editor.updateCursorPosition()
+end
+
+-- ============================================================================
+-- SEÇÃO 5: FUNÇÕES EXTRAS DE ANIMADOR
+-- ============================================================================
+
+--[[ Mirror Pose: troca as poses de partes "Left"/"Right" no keyframe atual,
+     e inverte o eixo X da rotação/posição de cada uma (espelhamento). ]]
+function Editor.mirrorCurrentKeyframe()
+	local kf = Editor.getKeyframe(State.currentTime)
+	if not kf then return end
+	Editor.registerUndo({ action = "mirrorPose" })
+
+	local function mirrorName(name)
+		if name:find("Left") then return name:gsub("Left", "Right") end
+		if name:find("Right") then return name:gsub("Right", "Left") end
+		return nil
+	end
+
+	local function mirrorCFrame(cf)
+		local pos = cf.Position
+		local rx, ry, rz = cf:ToEulerAnglesXYZ()
+		return CFrame.new(-pos.X, pos.Y, pos.Z) * CFrame.Angles(rx, -ry, -rz)
+	end
+
+	local swaps = {}
+	for part, pose in pairs(kf.Poses) do
+		local mirroredName = mirrorName(part.Name)
+		if mirroredName then
+			for otherPart, _ in pairs(State.partList) do
+				if otherPart.Name == mirroredName then
+					table.insert(swaps, { a = part, b = otherPart })
+				end
+			end
+		end
+	end
+
+	local newPoses = {}
+	for part, pose in pairs(kf.Poses) do
+		newPoses[part] = pose
+	end
+	for _, swap in ipairs(swaps) do
+		local poseA, poseB = kf.Poses[swap.a], kf.Poses[swap.b]
+		if poseA then newPoses[swap.b] = { CFrame = mirrorCFrame(poseA.CFrame), Size = poseA.Size, EasingStyle = poseA.EasingStyle, EasingDirection = poseA.EasingDirection } end
+		if poseB then newPoses[swap.a] = { CFrame = mirrorCFrame(poseB.CFrame), Size = poseB.Size, EasingStyle = poseB.EasingStyle, EasingDirection = poseB.EasingDirection } end
+	end
+	kf.Poses = newPoses
+	Editor.updateCursorPosition()
+end
+
+--[[ Insere `duration` segundos no tempo do cursor, empurrando todos os
+     keyframes depois dele. ]]
+function Editor.insertTimeAtCursor(duration)
+	Editor.registerUndo({ action = "insertTime" })
+	local shifted = {}
+	for t, kf in pairs(State.keyframeList) do
+		if t >= State.currentTime then
+			kf.Time = t + duration
+			shifted[kf.Time] = kf
+		else
+			shifted[t] = kf
+		end
+	end
+	State.keyframeList = shifted
+	State.animationLength += duration
+	if State.onRefresh then State.onRefresh() end
+end
+
+--[[ Remove `duration` segundos a partir do cursor, puxando os keyframes
+     seguintes pra trás (e deletando os que caiam dentro do intervalo). ]]
+function Editor.removeTimeAtCursor(duration)
+	Editor.registerUndo({ action = "removeTime" })
+	local shifted = {}
+	for t, kf in pairs(State.keyframeList) do
+		if t >= State.currentTime and t < State.currentTime + duration then
+			-- descarta: caiu dentro do intervalo removido
+		elseif t >= State.currentTime + duration then
+			kf.Time = t - duration
+			shifted[kf.Time] = kf
+		else
+			shifted[t] = kf
+		end
+	end
+	State.keyframeList = shifted
+	State.animationLength = math.max(State.frameStep, State.animationLength - duration)
+	if State.onRefresh then State.onRefresh() end
+end
+
+--[[ Duplica o keyframe atual para outro tempo (por padrão, +1 segundo ou o
+     fim da animação, o que vier primeiro). ]]
+function Editor.duplicateKeyframe(kf, targetTime)
+	if not kf then return end
+	Editor.registerUndo({ action = "duplicateKeyframe" })
+	local t = clampTime(targetTime or math.min(kf.Time + 0.5, State.animationLength))
+	local newKf = { Time = t, Poses = deepCopy(kf.Poses), Name = kf.Name }
+	State.keyframeList[t] = newKf
+	if State.onRefresh then State.onRefresh() end
+	return newKf
+end
+
+function Editor.setAnimationLength(length)
+	Editor.registerUndo({ action = "changeLength" })
+	State.animationLength = math.max(State.frameStep, length)
+	for t, kf in pairs(State.keyframeList) do
+		if t > State.animationLength then
+			kf.Time = State.animationLength
+			State.keyframeList[t] = nil
+			State.keyframeList[State.animationLength] = kf
+		end
+	end
+	if State.onRefresh then State.onRefresh() end
+end
+
+function Editor.setFramerate(fps)
+	State.frameStep = 1 / math.max(1, fps)
+end
+
+function Editor.setPriority(priorityName)
+	State.animationPriority = priorityName
+end
+
+function Editor.setLooping(shouldLoop)
+	State.loopAnimation = shouldLoop
+end
+
+function Editor.toggleAutoKey()
+	State.autoKey = not State.autoKey
+	return State.autoKey
+end
+
+--[[ Onion Skin: mostra marcadores fantasmas (azul = keyframe anterior,
+     verde = próximo) na posição de cada parte incluída, sem alterar o rig
+     de verdade. Reaproveita a mesma lógica de interpolação, só que calcula
+     a pose em outro instante de tempo e desenha esferas semi-transparentes
+     no lugar, ao invés de mover o modelo. ]]
+local onionParts = {}
+local function clearOnionSkin()
+	for _, p in ipairs(onionParts) do p:Destroy() end
+	onionParts = {}
+end
+
+local function sortedTimes()
+	local t = {}
+	for time, _ in pairs(State.keyframeList) do table.insert(t, time) end
+	table.sort(t)
+	return t
+end
+
+local function findSurrounding(time)
+	local before, after
+	for _, t in ipairs(sortedTimes()) do
+		if t <= time then before = State.keyframeList[t]
+		elseif not after then after = State.keyframeList[t] end
+	end
+	return before, after
+end
+
+-- Calcula CFrame absoluto de cada parte incluída, para um tempo arbitrário,
+-- sem tocar no rig real (usado pelo Onion Skin).
+local function computeWorldPoseAtTime(time)
+	local worldCFrames = {}
+	local before, after = findSurrounding(time)
+	if not before then return worldCFrames end
+
+	local function resolve(node, parentWorldCFrame)
+		local worldCFrame
+		if not node.Motor then
+			worldCFrame = node.Part.CFrame
+		else
+			local poseBefore = before.Poses[node.Part]
+			local target = poseBefore and poseBefore.CFrame or CFrame.new()
+			if poseBefore and State.interpolationEnabled and after and after.Poses[node.Part] and after ~= before then
+				local poseAfter = after.Poses[node.Part]
+				local span = after.Time - before.Time
+				local alpha = span > 0 and (time - before.Time) / span or 0
+				target = poseBefore.CFrame:Lerp(poseAfter.CFrame, alpha)
+			end
+			worldCFrame = parentWorldCFrame * (node.OriginC0 * target) * node.OriginC1:Inverse()
+		end
+		worldCFrames[node.Part] = worldCFrame
+		for _, child in ipairs(node.Children) do resolve(child, worldCFrame) end
+	end
+
+	if State.rootNode then resolve(State.rootNode, State.rootNode.Part.CFrame) end
+	return worldCFrames
+end
+
+local function drawOnionMarkers(worldCFrames, color)
+	for part, cf in pairs(worldCFrames) do
+		if not part:IsA("BasePart") then continue end
+		local marker = Make("Part", {
+			Name = "OnionMarker",
+			Shape = Enum.PartType.Ball,
+			Size = Vector3.new(0.35, 0.35, 0.35),
+			Color3 = color,
+			Color = color,
+			Material = Enum.Material.Neon,
+			Transparency = 0.4,
+			Anchored = true,
+			CanCollide = false,
+			CanQuery = false,
+			CFrame = cf,
+			Parent = workspace,
+		})
+		table.insert(onionParts, marker)
+	end
+end
+
+function Editor.refreshOnionSkin()
+	clearOnionSkin()
+	if not State.onionSkinEnabled then return end
+	local step = State.frameStep * 3 -- ~3 frames antes/depois
+	local prevWorld = computeWorldPoseAtTime(math.max(0, State.currentTime - step))
+	local nextWorld = computeWorldPoseAtTime(math.min(State.animationLength, State.currentTime + step))
+	drawOnionMarkers(prevWorld, COLORS.OnionPrev)
+	drawOnionMarkers(nextWorld, COLORS.OnionNext)
+end
+
+function Editor.toggleOnionSkin()
+	State.onionSkinEnabled = not State.onionSkinEnabled
+	if not State.onionSkinEnabled then clearOnionSkin() end
+	Editor.refreshOnionSkin()
+	return State.onionSkinEnabled
+end
+
+--[[ Zoom to Fit: devolve o fator de zoom ideal pra timeline caber todos os
+     keyframes na tela (a UI usa esse valor pra ajustar o CanvasSize). ]]
+function Editor.getZoomToFit()
+	return 1 -- a UI recalcula com base em State.animationLength; aqui fica só o hook
+end
+
+-- ============================================================================
+-- SEÇÃO 6: INTERPOLAÇÃO / CURSOR
+-- ============================================================================
+
+function Editor.updateCursorPosition()
+	local before, after = findSurrounding(State.currentTime)
+	if not before then return end
+	for part, node in pairs(State.partList) do
+		local poseBefore = before.Poses[part]
+		if poseBefore then
+			local targetCFrame, targetSize = poseBefore.CFrame, poseBefore.Size
+			if State.interpolationEnabled and after and after.Poses[part] and after ~= before then
+				local poseAfter = after.Poses[part]
+				local span = after.Time - before.Time
+				local alpha = span > 0 and (State.currentTime - before.Time) / span or 0
+				targetCFrame = poseBefore.CFrame:Lerp(poseAfter.CFrame, alpha)
+				targetSize = poseBefore.Size:Lerp(poseAfter.Size, alpha)
+			end
+			if node.Motor then node.Motor.C0 = node.OriginC0 * targetCFrame end
+			if targetSize then node.Part.Size = targetSize end
+		end
+	end
+	if State.onionSkinEnabled then Editor.refreshOnionSkin() end
+	if State.onCursorUpdate then State.onCursorUpdate() end
+end
+
+-- ============================================================================
+-- SEÇÃO 7: UNDO / REDO
+-- ============================================================================
+
+local function snapshot()
+	return { keyframeList = deepCopy(State.keyframeList), animationLength = State.animationLength }
+end
+local function restore(snap)
+	State.keyframeList = deepCopy(snap.keyframeList)
+	State.animationLength = snap.animationLength
+	Editor.updateCursorPosition()
+	if State.onRefresh then State.onRefresh() end
+end
+
+function Editor.registerUndo(actionData)
+	local last = State.undoStack[#State.undoStack]
+	if last and last.action == actionData.action and last.locked then return end
+	State.redoStack = {}
+	actionData.snapshot = snapshot()
+	table.insert(State.undoStack, actionData)
+end
+
+function Editor.lockUndoStep(actionName)
+	local last = State.undoStack[#State.undoStack]
+	if last and last.action == actionName then last.locked = true end
+end
+
+function Editor.undo()
+	local entry = table.remove(State.undoStack)
+	if not entry then return end
+	local current = snapshot()
+	restore(entry.snapshot)
+	entry.snapshot = current
+	table.insert(State.redoStack, entry)
+end
+
+function Editor.redo()
+	local entry = table.remove(State.redoStack)
+	if not entry then return end
+	local current = snapshot()
+	restore(entry.snapshot)
+	entry.snapshot = current
+	table.insert(State.undoStack, entry)
+end
+
+-- ============================================================================
+-- SEÇÃO 8: PLAYBACK
+-- ============================================================================
+
+local playConnection = nil
+function Editor.play()
+	if State.playing then return end
+	State.playing, State.stopAnim = true, false
+	playConnection = RunService.RenderStepped:Connect(function(dt)
+		if State.stopAnim then
+			State.playing = false
+			playConnection:Disconnect()
+			return
+		end
+		State.currentTime += dt
+		if State.currentTime > State.animationLength then
+			if State.loopAnimation then
+				State.currentTime = 0
+			else
+				State.currentTime = State.animationLength
+				State.stopAnim = true
+			end
+		end
+		Editor.updateCursorPosition()
+		if State.onPlaybackStep then State.onPlaybackStep(State.currentTime) end
+	end)
+end
+function Editor.stop() State.stopAnim = true end
+
+-- ============================================================================
+-- SEÇÃO 9: SALVAR / CARREGAR (KeyframeSequence nativo)
+-- ============================================================================
+
+local savedAnimations = {}
+
+function Editor.saveCurrentAnimation(animName, isExport)
+	local sequence = Instance.new("KeyframeSequence")
+	sequence.Name = animName or "Animation"
+	sequence.Priority = Enum.AnimationPriority[State.animationPriority] or Enum.AnimationPriority.Action
+	sequence.Loop = State.loopAnimation
+	for time, kf in pairs(State.keyframeList) do
+		local keyframe = Instance.new("Keyframe")
+		keyframe.Name, keyframe.Time = kf.Name or "Keyframe", time
+		for part, poseData in pairs(kf.Poses) do
+			local pose = Instance.new("Pose")
+			pose.Name = part.Name
+			pose.CFrame = poseData.CFrame
+			pose.EasingStyle = poseData.EasingStyle or Enum.PoseEasingStyle.Linear
+			pose.EasingDirection = poseData.EasingDirection or Enum.PoseEasingDirection.Out
+			pose.Parent = keyframe
+		end
+		keyframe.Parent = sequence
+	end
+	if isExport then sequence.Parent = ReplicatedStorage end
+	savedAnimations[animName] = sequence
+	return sequence
+end
+
+function Editor.loadAnimation(sequence)
+	State.keyframeList, State.animationLength = {}, 0
+	State.loopAnimation = sequence.Loop
+	for _, keyframe in ipairs(sequence:GetChildren()) do
+		if keyframe:IsA("Keyframe") then
+			local kf = { Time = keyframe.Time, Poses = {}, Name = keyframe.Name }
+			for _, pose in ipairs(keyframe:GetChildren()) do
+				if pose:IsA("Pose") then
+					for part, node in pairs(State.partList) do
+						if part.Name == pose.Name then
+							kf.Poses[part] = { CFrame = pose.CFrame, Size = node.OriginSize, EasingStyle = pose.EasingStyle, EasingDirection = pose.EasingDirection }
+						end
+					end
+				end
+			end
+			State.keyframeList[keyframe.Time] = kf
+			State.animationLength = math.max(State.animationLength, keyframe.Time)
+		end
+	end
+	Editor.updateCursorPosition()
+	if State.onRefresh then State.onRefresh() end
+end
+
+function Editor.listSavedAnimations()
+	local names = {}
+	for name, _ in pairs(savedAnimations) do table.insert(names, name) end
+	return names
+end
+function Editor.getSavedAnimation(name) return savedAnimations[name] end
+
+-- ============================================================================
+-- SEÇÃO 10: INICIALIZAÇÃO DO EDITOR (sem UI ainda)
+-- ============================================================================
+
+function Editor.init(character)
+	local root = Editor.buildRig(character)
+	if not root then return false end
+	Editor.createKeyframe(0, false)
+	State.currentTime = 0
+	Editor.updateCursorPosition()
+	return true
+end
+
+-- ============================================================================
+--  A PARTIR DAQUI: INTERFACE (usa Editor.* diretamente, sem _G)
+-- ============================================================================
+
+local ui = {}
+
+local function attachTooltip() end -- placeholder simples (mobile não usa hover)
+
+-- ---- Dialogs ---------------------------------------------------------------
+
+local function showTextEntryDialog(title, defaultText)
+	State.modal = true
+	local result, confirmed = defaultText, false
+	local dialog = Make("Frame", {
+		Name = "TextEntryDialog", BackgroundColor3 = COLORS.PanelDark, BorderColor3 = COLORS.Border, BorderSizePixel = 1,
+		Size = UDim2.new(0, px(360), 0, px(120)), Position = UDim2.new(0.5, -px(180), 0.5, -px(60)), ZIndex = 200,
+		Make("TextLabel", { Text = title, Font = FONT_BOLD, TextSize = px(14), TextColor3 = COLORS.Text, BackgroundTransparency = 1,
+			Position = UDim2.new(0.05, 0, 0, 6), Size = UDim2.new(0.9, 0, 0, px(18)), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 201 }),
+		Make("TextBox", { Name = "InputBox", Text = defaultText or "", Font = FONT, TextSize = px(16), TextColor3 = COLORS.Text,
+			BackgroundColor3 = COLORS.InputBg, BorderColor3 = COLORS.Border, BorderSizePixel = 1, ClearTextOnFocus = false,
+			Position = UDim2.new(0.05, 0, 0, px(30)), Size = UDim2.new(0.9, 0, 0, px(34)), ZIndex = 201 }),
+		Make("TextButton", { Name = "OK", Text = "OK", Font = FONT_BOLD, TextSize = px(14), TextColor3 = COLORS.Text,
+			BackgroundColor3 = COLORS.DialogButton, BorderSizePixel = 0, Position = UDim2.new(0.05, 0, 0, px(74)), Size = UDim2.new(0.42, 0, 0, px(34)), ZIndex = 201 }),
+		Make("TextButton", { Name = "Cancel", Text = "Cancel", Font = FONT_BOLD, TextSize = px(14), TextColor3 = COLORS.Text,
+			BackgroundColor3 = COLORS.DialogButton, BorderSizePixel = 0, Position = UDim2.new(0.53, 0, 0, px(74)), Size = UDim2.new(0.42, 0, 0, px(34)), ZIndex = 201 }),
+	})
+	dialog.Parent = ui.mainWindow
+	dialog.OK.MouseButton1Click:Connect(function() result, confirmed = dialog.InputBox.Text, true end)
+	dialog.Cancel.MouseButton1Click:Connect(function() result, confirmed = nil, true end)
+	repeat task.wait(0.05) until confirmed
+	dialog:Destroy()
+	State.modal = false
+	return result
+end
+
+local function showConfirmationDialog(message)
+	State.modal = true
+	local result, confirmed = false, false
+	local dialog = Make("Frame", {
+		Name = "ConfirmDialog", BackgroundColor3 = COLORS.PanelDark, BorderColor3 = COLORS.Border, BorderSizePixel = 1,
+		Size = UDim2.new(0, px(360), 0, px(110)), Position = UDim2.new(0.5, -px(180), 0.5, -px(55)), ZIndex = 200,
+		Make("TextLabel", { Text = message, Font = FONT, TextSize = px(13), TextColor3 = COLORS.Text, BackgroundTransparency = 1, TextWrapped = true,
+			Position = UDim2.new(0.05, 0, 0, 6), Size = UDim2.new(0.9, 0, 0, px(46)), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 201 }),
+		Make("TextButton", { Name = "OK", Text = "OK", Font = FONT_BOLD, TextSize = px(14), TextColor3 = COLORS.Text,
+			BackgroundColor3 = COLORS.DialogButton, BorderSizePixel = 0, Position = UDim2.new(0.05, 0, 0, px(60)), Size = UDim2.new(0.42, 0, 0, px(34)), ZIndex = 201 }),
+		Make("TextButton", { Name = "Cancel", Text = "Cancel", Font = FONT_BOLD, TextSize = px(14), TextColor3 = COLORS.Text,
+			BackgroundColor3 = COLORS.DialogButton, BorderSizePixel = 0, Position = UDim2.new(0.53, 0, 0, px(60)), Size = UDim2.new(0.42, 0, 0, px(34)), ZIndex = 201 }),
+	})
+	dialog.Parent = ui.mainWindow
+	dialog.OK.MouseButton1Click:Connect(function() result, confirmed = true, true end)
+	dialog.Cancel.MouseButton1Click:Connect(function() result, confirmed = false, true end)
+	repeat task.wait(0.05) until confirmed
+	dialog:Destroy()
+	State.modal = false
+	return result
+end
 
 local function closeContextMenu()
-	if ui.contextMenu then
-		ui.contextMenu:Destroy()
-		ui.contextMenu = nil
-	end
-	uiState.menuOpen = false
-	uiState.modal = false
+	if ui.contextMenu then ui.contextMenu:Destroy(); ui.contextMenu = nil end
+	State.modal = false
 end
 
 local function showContextMenu(options, position)
 	closeContextMenu()
-	uiState.modal = true
-	uiState.menuOpen = true
-	
-	local menuHeight = #options * 22 + 4
-	ui.contextMenu = Make("Frame", {
-		Name = "ContextMenu",
-		BackgroundColor3 = COLORS.MenuBg,
-		BorderColor3 = COLORS.Border,
-		BorderSizePixel = 1,
-		Size = UDim2.new(0, 140, 0, menuHeight),
-		Position = UDim2.new(0, position.X, 0, position.Y),
-		ZIndex = 50,
+	State.modal = true
+	local itemHeight = px(28)
+	local menu = Make("Frame", {
+		Name = "ContextMenu", BackgroundColor3 = COLORS.PanelDark, BorderColor3 = COLORS.Border, BorderSizePixel = 1,
+		Size = UDim2.new(0, px(170), 0, #options * itemHeight + 4),
+		Position = UDim2.new(0, math.clamp(position.X, 0, camera.ViewportSize.X - px(170)), 0, position.Y), ZIndex = 60,
 	})
-	
 	for i, option in ipairs(options) do
 		local btn = Make("TextButton", {
-			Name = option.name .. "Option",
-			Text = option.label,
-			Font = FONT_SETTINGS.Font,
-			TextSize = 12,
-			TextColor3 = COLORS.Text,
-			BackgroundColor3 = COLORS.MenuItemBg,
-			BorderSizePixel = 0,
-			Size = UDim2.new(1, -4, 0, 20),
-			Position = UDim2.new(0, 2, 0, (i-1) * 22 + 2),
-			ZIndex = 51,
-			Parent = ui.contextMenu,
+			Text = option.label, Font = FONT, TextSize = px(13), TextColor3 = COLORS.Text,
+			BackgroundColor3 = COLORS.ButtonOff, BorderSizePixel = 0,
+			Size = UDim2.new(1, -4, 0, itemHeight - 2), Position = UDim2.new(0, 2, 0, (i - 1) * itemHeight + 2),
+			ZIndex = 61, Parent = menu,
 		})
-		
-		btn.MouseEnter:Connect(function()
-			btn.BackgroundColor3 = COLORS.MenuItemHover
-		end)
-		btn.MouseLeave:Connect(function()
-			btn.BackgroundColor3 = COLORS.MenuItemBg
-		end)
 		btn.MouseButton1Click:Connect(function()
-			if option.callback then
-				option.callback()
-			end
+			if option.callback then option.callback() end
 			closeContextMenu()
 		end)
 	end
-	
-	ui.contextMenu.Parent = ui.mainWindow
+	menu.Parent = ui.mainWindow
+	ui.contextMenu = menu
 end
 
--- ============================================================================
--- SEÇÃO 6: DIALOGS (showTextEntryDialog / showConfirmationDialog)
--- ============================================================================
+-- ---- Janela principal -------------------------------------------------------
 
---[[
-	Exibe um dialog de entrada de texto.
-	Chama a função existente se disponível, senão cria um interno.
-]]
-function showTextEntryDialog(title, defaultText)
-	-- Se a função global existir, usa ela
-	if _G.showTextEntryDialog then
-		return _G.showTextEntryDialog(title, defaultText)
-	end
-	
-	-- Implementação interna
-	uiState.modal = true
-	local result = nil
-	local confirmed = false
-	
-	local dialog = Make("Frame", {
-		Name = "TextEntryDialog",
-		BackgroundColor3 = COLORS.DialogBg,
-		BorderColor3 = COLORS.Border,
-		BorderSizePixel = 1,
-		Size = UDim2.new(0, 400, 0, 105),
-		Position = UDim2.new(0.5, -200, 0.5, -52),
-		ZIndex = 200,
-		Make("TextLabel", {
-			Name = "Title",
-			Text = title,
-			Font = FONT_SETTINGS.FontBold,
-			TextSize = 14,
-			TextColor3 = COLORS.Text,
-			BackgroundTransparency = 1,
-			Position = UDim2.new(0.05, 0, 0, 5),
-			Size = UDim2.new(0.9, 0, 0, 15),
-			TextXAlignment = Enum.TextXAlignment.Left,
-			ZIndex = 201,
-		}),
-		Make("Frame", {
-			Name = "InputFrame",
-			BackgroundColor3 = COLORS.InputBg,
-			BorderColor3 = COLORS.Border,
-			BorderSizePixel = 1,
-			Position = UDim2.new(0.05, 0, 0, 25),
-			Size = UDim2.new(0.9, 0, 0, 30),
-			ZIndex = 201,
-			Make("TextBox", {
-				Name = "InputBox",
-				Text = defaultText or "",
-				Font = FONT_SETTINGS.FontBold,
-				TextSize = 14,
-				TextColor3 = COLORS.Text,
-				BackgroundTransparency = 1,
-				Position = UDim2.new(0.05, 0, 0, 0),
-				Size = UDim2.new(0.9, 0, 1, 0),
-				TextXAlignment = Enum.TextXAlignment.Left,
-				ClearTextOnFocus = false,
-				ZIndex = 202,
-			})
-		}),
-		Make("TextButton", {
-			Name = "OKButton",
-			Text = "OK",
-			Font = FONT_SETTINGS.FontBold,
-			TextSize = 14,
-			TextColor3 = COLORS.Text,
-			BackgroundColor3 = COLORS.DialogButton,
-			BorderSizePixel = 0,
-			Position = UDim2.new(0.05, 0, 0, 65),
-			Size = UDim2.new(0.4, 0, 0, 30),
-			ZIndex = 201,
-		}),
-		Make("TextButton", {
-			Name = "CancelButton",
-			Text = "Cancel",
-			Font = FONT_SETTINGS.FontBold,
-			TextSize = 14,
-			TextColor3 = COLORS.Text,
-			BackgroundColor3 = COLORS.DialogButton,
-			BorderSizePixel = 0,
-			Position = UDim2.new(0.55, 0, 0, 65),
-			Size = UDim2.new(0.4, 0, 0, 30),
-			ZIndex = 201,
-		}),
-	})
-	
-	dialog.Parent = ui.mainWindow
-	
-	local function cleanup()
-		dialog:Destroy()
-		uiState.modal = false
-	end
-	
-	dialog.OKButton.MouseButton1Click:Connect(function()
-		result = dialog.InputFrame.InputBox.Text
-		confirmed = true
-		cleanup()
-	end)
-	
-	dialog.CancelButton.MouseButton1Click:Connect(function()
-		result = nil
-		confirmed = true
-		cleanup()
-	end)
-	
-	-- Aguarda confirmação (bloqueante simulado)
-	repeat task.wait(0.1) until confirmed
-	return result
-end
-
---[[
-	Exibe um dialog de confirmação.
-	Chama a função global existente se disponível.
-]]
-function showConfirmationDialog(message)
-	if _G.showConfirmationDialog then
-		return _G.showConfirmationDialog(message)
-	end
-	
-	uiState.modal = true
-	local result = false
-	local confirmed = false
-	
-	local dialog = Make("Frame", {
-		Name = "ConfirmDialog",
-		BackgroundColor3 = COLORS.DialogBg,
-		BorderColor3 = COLORS.Border,
-		BorderSizePixel = 1,
-		Size = UDim2.new(0, 400, 0, 105),
-		Position = UDim2.new(0.5, -200, 0.5, -52),
-		ZIndex = 200,
-		Make("TextLabel", {
-			Name = "Message",
-			Text = message,
-			Font = FONT_SETTINGS.FontBold,
-			TextSize = 14,
-			TextColor3 = COLORS.Text,
-			BackgroundTransparency = 1,
-			Position = UDim2.new(0.05, 0, 0, 5),
-			Size = UDim2.new(0.9, 0, 0, 30),
-			TextXAlignment = Enum.TextXAlignment.Left,
-			ZIndex = 201,
-		}),
-		Make("TextButton", {
-			Name = "OKButton",
-			Text = "OK",
-			Font = FONT_SETTINGS.FontBold,
-			TextSize = 14,
-			TextColor3 = COLORS.Text,
-			BackgroundColor3 = COLORS.DialogButton,
-			BorderSizePixel = 0,
-			Position = UDim2.new(0.05, 0, 0, 55),
-			Size = UDim2.new(0.4, 0, 0, 30),
-			ZIndex = 201,
-		}),
-		Make("TextButton", {
-			Name = "CancelButton",
-			Text = "Cancel",
-			Font = FONT_SETTINGS.FontBold,
-			TextSize = 14,
-			TextColor3 = COLORS.Text,
-			BackgroundColor3 = COLORS.DialogButton,
-			BorderSizePixel = 0,
-			Position = UDim2.new(0.55, 0, 0, 55),
-			Size = UDim2.new(0.4, 0, 0, 30),
-			ZIndex = 201,
-		}),
-	})
-	
-	dialog.Parent = ui.mainWindow
-	
-	local function cleanup()
-		dialog:Destroy()
-		uiState.modal = false
-	end
-	
-	dialog.OKButton.MouseButton1Click:Connect(function()
-		result = true
-		confirmed = true
-		cleanup()
-	end)
-	
-	dialog.CancelButton.MouseButton1Click:Connect(function()
-		result = false
-		confirmed = true
-		cleanup()
-	end)
-	
-	repeat task.wait(0.1) until confirmed
-	return result
-end
-
--- ============================================================================
--- SEÇÃO 7: DROPDOWN MENU (displayDropDownMenu)
--- ============================================================================
-
---[[
-	Exibe um dropdown menu.
-	Integra com a função global existente se disponível.
-]]
-function displayDropDownMenu(items, x, y)
-	if _G.displayDropDownMenu then
-		return _G.displayDropDownMenu(items, x, y)
-	end
-	
-	-- Implementação interna
-	local options = {}
-	for _, item in ipairs(items) do
-		table.insert(options, {
-			name = item,
-			label = item,
-			callback = function()
-				-- Retorna o item selecionado via variável temporária
-				-- Na prática, o callback seria tratado pelo chamador
-			end
-		})
-	end
-	
-	showContextMenu(options, Vector2.new(x, y))
-	return nil -- Simplificado - na implementação real retornaria o item
-end
-
--- ============================================================================
--- SEÇÃO 8: JANELA PRINCIPAL (Main Window)
--- ============================================================================
-
-local function createMainWindow()
+local function createMainWindow(screenGui)
+	local width = IS_SMALL_SCREEN and camera.ViewportSize.X or math.min(1100, camera.ViewportSize.X - 20)
+	local height = IS_SMALL_SCREEN and camera.ViewportSize.Y or math.min(650, camera.ViewportSize.Y - 20)
 	ui.mainWindow = Make("Frame", {
-		Name = "AnimationEditorWindow",
-		BackgroundColor3 = COLORS.Background,
-		BorderColor3 = COLORS.Border,
-		BorderSizePixel = 1,
-		Size = UDim2.new(0, WINDOW.DefaultWidth, 0, WINDOW.DefaultHeight),
-		Position = UDim2.new(0.5, -WINDOW.DefaultWidth/2, 0.5, -WINDOW.DefaultHeight/2),
-		ClipsDescendants = true,
-		Active = true,
-		Draggable = true, -- Roblox nativo drag
+		Name = "AnimationEditorWindow", BackgroundColor3 = COLORS.Background, BorderColor3 = COLORS.Border, BorderSizePixel = 1,
+		Size = UDim2.new(0, width, 0, height),
+		Position = UDim2.new(0.5, -width / 2, 0.5, -height / 2),
+		ClipsDescendants = true, Active = true, Draggable = not IS_SMALL_SCREEN,
+		Parent = screenGui,
 	})
-	
-	ui.mainWindow.Parent = script.Parent -- ScreenGui
 end
-
--- ============================================================================
--- SEÇÃO 9: BARRA DE TÍTULO (Title Bar)
--- ============================================================================
 
 local function createTitleBar()
 	ui.titleBar = Make("Frame", {
-		Name = "TitleBar",
-		BackgroundColor3 = COLORS.TitleBar,
-		BorderColor3 = COLORS.Border,
-		BorderSizePixel = 1,
-		Size = UDim2.new(1, 0, 0, WINDOW.TitleBarHeight),
-		Position = UDim2.new(0, 0, 0, 0),
-		Active = true,
-		Parent = ui.mainWindow,
+		Name = "TitleBar", BackgroundColor3 = COLORS.TitleBar, BorderColor3 = COLORS.Border, BorderSizePixel = 1,
+		Size = UDim2.new(1, 0, 0, LAYOUT.TitleBarHeight), Parent = ui.mainWindow,
 	})
-	
-	-- Título
 	Make("TextLabel", {
-		Name = "TitleText",
-		Text = "Animation Editor",
-		Font = FONT_SETTINGS.FontBold,
-		TextSize = 12,
-		TextColor3 = COLORS.Text,
-		BackgroundTransparency = 1,
-		Position = UDim2.new(0, 5, 0, 0),
-		Size = UDim2.new(0, 200, 1, 0),
-		TextXAlignment = Enum.TextXAlignment.Left,
-		Parent = ui.titleBar,
+		Text = "Animation Editor", Font = FONT_BOLD, TextSize = px(13), TextColor3 = COLORS.Text, BackgroundTransparency = 1,
+		Position = UDim2.new(0, 6, 0, 0), Size = UDim2.new(0, 220, 1, 0), TextXAlignment = Enum.TextXAlignment.Left, Parent = ui.titleBar,
 	})
-	
-	-- Botão Minimizar
-	local minimizeBtn = Make("TextButton", {
-		Name = "MinimizeButton",
-		Text = "_",
-		Font = FONT_SETTINGS.FontBold,
-		TextSize = 12,
-		TextColor3 = COLORS.Text,
-		BackgroundColor3 = COLORS.ButtonOff,
-		BorderColor3 = COLORS.Border,
-		BorderSizePixel = 1,
-		Size = UDim2.new(0, 20, 0, 18),
-		Position = UDim2.new(1, -65, 0, 2),
-		Parent = ui.titleBar,
-	})
-	styleButton(minimizeBtn)
-	attachTooltip(minimizeBtn, "Minimize")
-	minimizeBtn.MouseButton1Click:Connect(function()
-		-- Minimiza a janela (mostra apenas title bar)
-		local currentSize = ui.mainWindow.Size
-		ui.mainWindow:SetAttribute("PrevSize", currentSize)
-		ui.mainWindow.Size = UDim2.new(0, currentSize.X.Offset, 0, WINDOW.TitleBarHeight)
-	end)
-	
-	-- Botão Maximizar
-	local maximizeBtn = Make("TextButton", {
-		Name = "MaximizeButton",
-		Text = "□",
-		Font = FONT_SETTINGS.FontBold,
-		TextSize = 12,
-		TextColor3 = COLORS.Text,
-		BackgroundColor3 = COLORS.ButtonOff,
-		BorderColor3 = COLORS.Border,
-		BorderSizePixel = 1,
-		Size = UDim2.new(0, 20, 0, 18),
-		Position = UDim2.new(1, -43, 0, 2),
-		Parent = ui.titleBar,
-	})
-	styleButton(maximizeBtn)
-	attachTooltip(maximizeBtn, "Maximize")
-	maximizeBtn.MouseButton1Click:Connect(function()
-		local prevSize = ui.mainWindow:GetAttribute("PrevSize")
-		if prevSize then
-			ui.mainWindow.Size = prevSize
-			ui.mainWindow:SetAttribute("PrevSize", nil)
-		else
-			ui.mainWindow.Size = UDim2.new(0, WINDOW.DefaultWidth, 0, WINDOW.DefaultHeight)
-		end
-	end)
-	
-	-- Botão Fechar
 	local closeBtn = Make("TextButton", {
-		Name = "CloseButton",
-		Text = "X",
-		Font = FONT_SETTINGS.FontBold,
-		TextSize = 12,
-		TextColor3 = COLORS.Text,
-		BackgroundColor3 = COLORS.CloseButton,
-		BorderColor3 = COLORS.Border,
-		BorderSizePixel = 1,
-		Size = UDim2.new(0, 20, 0, 18),
-		Position = UDim2.new(1, -21, 0, 2),
-		Parent = ui.titleBar,
+		Text = "X", Font = FONT_BOLD, TextSize = px(13), TextColor3 = COLORS.Text, BackgroundColor3 = COLORS.CloseButton,
+		Size = UDim2.new(0, px(26), 0, LAYOUT.TitleBarHeight - 4), Position = UDim2.new(1, -px(30), 0, 2), Parent = ui.titleBar,
 	})
-	closeBtn.MouseEnter:Connect(function()
-		closeBtn.BackgroundColor3 = Color3.new(0.8, 0.2, 0.2)
-	end)
-	closeBtn.MouseLeave:Connect(function()
-		closeBtn.BackgroundColor3 = COLORS.CloseButton
-	end)
-	attachTooltip(closeBtn, "Close")
 	closeBtn.MouseButton1Click:Connect(function()
-		-- Chama função de saída existente
-		if _G.exitPlugin then
-			_G.exitPlugin()
-		else
-			ui.mainWindow.Visible = false
-		end
-	end)
-	
-	-- Redimensionamento manual (cantos)
-	local resizeHandle = Make("TextButton", {
-		Name = "ResizeHandle",
-		Text = "",
-		BackgroundColor3 = COLORS.ButtonOff,
-		BorderColor3 = COLORS.Border,
-		BorderSizePixel = 1,
-		Size = UDim2.new(0, 15, 0, 15),
-		Position = UDim2.new(1, -15, 1, -15),
-		Parent = ui.mainWindow,
-		ZIndex = 10,
-	})
-	
-	local dragStart, startSize
-	resizeHandle.InputBegan:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1 then
-			dragStart = Vector2.new(mouse.X, mouse.Y)
-			startSize = Vector2.new(ui.mainWindow.Size.X.Offset, ui.mainWindow.Size.Y.Offset)
-			uiState.isResizing = true
-		end
-	end)
-	
-	UserInputService.InputChanged:Connect(function(input)
-		if uiState.isResizing and input.UserInputType == Enum.UserInputType.MouseMovement then
-			local delta = Vector2.new(mouse.X, mouse.Y) - dragStart
-			local newWidth = math.max(WINDOW.MinWidth, startSize.X + delta.X)
-			local newHeight = math.max(WINDOW.MinHeight, startSize.Y + delta.Y)
-			ui.mainWindow.Size = UDim2.new(0, newWidth, 0, newHeight)
-		end
-	end)
-	
-	UserInputService.InputEnded:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1 then
-			uiState.isResizing = false
-		end
+		Editor.stop()
+		ui.mainWindow.Visible = false
 	end)
 end
 
--- ============================================================================
--- SEÇÃO 10: TOOLBAR SUPERIOR
--- ============================================================================
+-- ---- Toolbar (com scroll horizontal, boa pra mobile) -----------------------
 
 local function createToolbar()
-	ui.toolbar = Make("Frame", {
-		Name = "Toolbar",
-		BackgroundColor3 = COLORS.Panel,
-		BorderColor3 = COLORS.Border,
-		BorderSizePixel = 1,
-		Size = UDim2.new(1, 0, 0, WINDOW.ToolbarHeight),
-		Position = UDim2.new(0, 0, 0, WINDOW.TitleBarHeight),
+	ui.toolbar = Make("ScrollingFrame", {
+		Name = "Toolbar", BackgroundColor3 = COLORS.Panel, BorderColor3 = COLORS.Border, BorderSizePixel = 1,
+		Size = UDim2.new(1, 0, 0, LAYOUT.ToolbarHeight), Position = UDim2.new(0, 0, 0, LAYOUT.TitleBarHeight),
+		ScrollingDirection = Enum.ScrollingDirection.X, ScrollBarThickness = px(4), CanvasSize = UDim2.new(0, 0, 0, 0),
 		Parent = ui.mainWindow,
 	})
-	
-	local toolbarButtons = {
-		-- Grupo: Arquivo
-		{name = "new", label = "New", tooltip = "New Animation", group = "file"},
-		{name = "open", label = "Open", tooltip = "Open Animation", group = "file"},
-		{name = "save", label = "Save", tooltip = "Save Animation", group = "file"},
-		{name = "saveas", label = "Save As", tooltip = "Save As", group = "file"},
-		{name = "export", label = "Export", tooltip = "Export Animation", group = "file"},
-		{name = "import", label = "Import", tooltip = "Import Animation", group = "file"},
-		
-		-- Separador
-		{name = "sep1", label = "|", tooltip = "", group = "sep"},
-		
-		-- Grupo: Playback
-		{name = "play", label = "Play", tooltip = "Play Animation", group = "playback"},
-		{name = "pause", label = "Pause", tooltip = "Pause Animation", group = "playback"},
-		{name = "stop", label = "Stop", tooltip = "Stop Animation", group = "playback"},
-		{name = "loop", label = "Loop", tooltip = "Toggle Loop", group = "playback", toggle = true},
-		
-		-- Separador
-		{name = "sep2", label = "|", tooltip = "", group = "sep"},
-		
-		-- Grupo: Edição
-		{name = "undo", label = "Undo", tooltip = "Undo", group = "edit"},
-		{name = "redo", label = "Redo", tooltip = "Redo", group = "edit"},
-		
-		-- Separador
-		{name = "sep3", label = "|", tooltip = "", group = "sep"},
-		
-		-- Grupo: Ferramentas
-		{name = "rotate", label = "Rotate", tooltip = "Rotate Tool", group = "tool", toggle = true},
-		{name = "move", label = "Move", tooltip = "Move Tool", group = "tool", toggle = true},
-		{name = "scale", label = "Scale", tooltip = "Scale Tool", group = "tool", toggle = true},
-		{name = "local_space", label = "Local", tooltip = "Local Space", group = "space", toggle = true},
-		{name = "world_space", label = "World", tooltip = "World Space", group = "space", toggle = true},
-		{name = "snap", label = "Snap", tooltip = "Toggle Snapping", group = "tool", toggle = true},
-		{name = "interpolate", label = "Interp", tooltip = "Toggle Interpolation", group = "tool", toggle = true},
-		
-		-- Separador
-		{name = "sep4", label = "|", tooltip = "", group = "sep"},
-		
-		-- Grupo: Keyframe
-		{name = "keyframe_add", label = "+Kf", tooltip = "Add Keyframe", group = "keyframe"},
-		{name = "keyframe_delete", label = "-Kf", tooltip = "Delete Keyframe", group = "keyframe"},
-		{name = "keyframe_duplicate", label = "Dup", tooltip = "Duplicate Keyframe", group = "keyframe"},
-		{name = "copy", label = "Copy", tooltip = "Copy Pose", group = "keyframe"},
-		{name = "paste", label = "Paste", tooltip = "Paste Pose", group = "keyframe"},
-		
-		-- Separador
-		{name = "sep5", label = "|", tooltip = "", group = "sep"},
-		
-		-- Grupo: Bone
-		{name = "bone_add", label = "+Bone", tooltip = "Add Bone", group = "bone"},
-		{name = "bone_remove", label = "-Bone", tooltip = "Remove Bone", group = "bone"},
-		{name = "mirror", label = "Mirror", tooltip = "Mirror", group = "bone"},
-		{name = "reset", label = "Reset", tooltip = "Reset Pose", group = "bone"},
+
+	local buttons = {
+		{ id = "new", label = "New" }, { id = "save", label = "Save" }, { id = "load", label = "Load" }, { id = "export", label = "Export" },
+		{ id = "sep" },
+		{ id = "undo", label = "Undo" }, { id = "redo", label = "Redo" },
+		{ id = "sep" },
+		{ id = "rotate", label = "Rotate", toggle = true, group = "tool" },
+		{ id = "move", label = "Move", toggle = true, group = "tool" },
+		{ id = "grow", label = "Grow", toggle = true, group = "tool" },
+		{ id = "sep" },
+		{ id = "snap", label = "Snap", toggle = true },
+		{ id = "interp", label = "Interp", toggle = true },
+		{ id = "autokey", label = "Auto-Key", toggle = true },
+		{ id = "onionskin", label = "Onion", toggle = true },
+		{ id = "sep" },
+		{ id = "keyframe_add", label = "+Kf" }, { id = "keyframe_delete", label = "-Kf" }, { id = "duplicate", label = "Dup Kf" },
+		{ id = "copy", label = "Copy" }, { id = "paste", label = "Paste" }, { id = "mirror", label = "Mirror" },
+		{ id = "sep" },
+		{ id = "insert_time", label = "+Time" }, { id = "remove_time", label = "-Time" },
+		{ id = "sep" },
+		{ id = "length", label = "Length" }, { id = "framerate", label = "FPS" }, { id = "priority", label = "Priority" }, { id = "loop", label = "Loop", toggle = true },
 	}
-	
-	local xOffset = 5
-	for _, btnData in ipairs(toolbarButtons) do
-		if btnData.group == "sep" then
-			-- Separador visual
-			Make("Frame", {
-				Name = "Separator",
-				BackgroundColor3 = COLORS.Separator,
-				BorderSizePixel = 0,
-				Size = UDim2.new(0, 1, 0, 20),
-				Position = UDim2.new(0, xOffset, 0, 4),
-				Parent = ui.toolbar,
-			})
-			xOffset = xOffset + 6
+
+	local x = px(4)
+	local toolButtons = {}
+	for _, data in ipairs(buttons) do
+		if data.id == "sep" then
+			Make("Frame", { BackgroundColor3 = COLORS.Border, BorderSizePixel = 0, Size = UDim2.new(0, 1, 0, px(20)), Position = UDim2.new(0, x, 0, px(6)), Parent = ui.toolbar })
+			x += px(8)
 		else
+			local w = math.max(px(46), #data.label * px(7) + px(14))
 			local btn = Make("TextButton", {
-				Name = btnData.name .. "Btn",
-				Text = btnData.label,
-				Font = FONT_SETTINGS.Font,
-				TextSize = 11,
-				BackgroundColor3 = COLORS.ButtonOff,
-				BorderColor3 = COLORS.Border,
-				BorderSizePixel = 1,
-				Size = UDim2.new(0, math.max(35, #btnData.label * 7 + 8), 0, 22),
-				Position = UDim2.new(0, xOffset, 0, 3),
-				Parent = ui.toolbar,
+				Name = data.id .. "Btn", Text = data.label, Size = UDim2.new(0, w, 0, LAYOUT.ToolbarHeight - px(8)),
+				Position = UDim2.new(0, x, 0, px(4)), Parent = ui.toolbar,
 			})
-			
-			styleButton(btn, btnData.toggle or false)
-			attachTooltip(btn, btnData.tooltip)
-			
-			-- Callbacks dos botões
-			btn.MouseButton1Click:Connect(function()
-				if btnData.name == "new" then
-					if _G.promptNew then _G.promptNew() end
-				elseif btnData.name == "open" then
-					if _G.PromptLoad then _G.PromptLoad() end
-				elseif btnData.name == "save" then
-					if _G.PromptSave then _G.PromptSave() end
-				elseif btnData.name == "export" then
-					-- Exporta animação atual
-					if _G.saveCurrentAnimation then
-						local name = showTextEntryDialog("Export Name:", "Animation")
-						if name then
-							_G.saveCurrentAnimation(name, true)
-						end
-					end
-				elseif btnData.name == "import" then
-					if _G.importFbxAnimation then _G.importFbxAnimation() end
-				elseif btnData.name == "play" then
-					uiState.isPlaying = true
-					if _G.playCurrentAnimation then _G.playCurrentAnimation() end
-				elseif btnData.name == "pause" then
-					uiState.isPlaying = false
-				elseif btnData.name == "stop" then
-					uiState.isPlaying = false
-					if _G.stopAnim ~= nil then _G.stopAnim = true end
-				elseif btnData.name == "loop" then
-					uiState.isLooping = not uiState.isLooping
-					if _G.loopAnimation ~= nil then
-						_G.loopAnimation = uiState.isLooping
-					end
-					btn:SetAttribute("Selected", uiState.isLooping)
-				elseif btnData.name == "undo" then
-					if _G.undo then _G.undo() end
-				elseif btnData.name == "redo" then
-					if _G.redo then _G.redo() end
-				elseif btnData.name == "rotate" then
-					uiState.selectedTool = "rotate"
-					if _G.rotateMode ~= nil then _G.rotateMode = true end
-					-- Desseleciona outros tools
-					ui.toolbar:FindFirstChild("moveBtn"):SetAttribute("Selected", false)
-					ui.toolbar:FindFirstChild("scaleBtn"):SetAttribute("Selected", false)
-					btn:SetAttribute("Selected", true)
-				elseif btnData.name == "move" then
-					uiState.selectedTool = "move"
-					if _G.rotateMode ~= nil then _G.rotateMode = false end
-					ui.toolbar:FindFirstChild("rotateBtn"):SetAttribute("Selected", false)
-					ui.toolbar:FindFirstChild("scaleBtn"):SetAttribute("Selected", false)
-					btn:SetAttribute("Selected", true)
-				elseif btnData.name == "scale" then
-					uiState.selectedTool = "scale"
-					ui.toolbar:FindFirstChild("rotateBtn"):SetAttribute("Selected", false)
-					ui.toolbar:FindFirstChild("moveBtn"):SetAttribute("Selected", false)
-					btn:SetAttribute("Selected", true)
-				elseif btnData.name == "local_space" then
-					uiState.selectedSpace = "local"
-					if _G.currentSpace ~= nil then _G.currentSpace = "local" end
-					ui.toolbar:FindFirstChild("world_spaceBtn"):SetAttribute("Selected", false)
-					btn:SetAttribute("Selected", true)
-				elseif btnData.name == "world_space" then
-					uiState.selectedSpace = "world"
-					if _G.currentSpace ~= nil then _G.currentSpace = "world" end
-					ui.toolbar:FindFirstChild("local_spaceBtn"):SetAttribute("Selected", false)
-					btn:SetAttribute("Selected", true)
-				elseif btnData.name == "snap" then
-					uiState.snapping = not uiState.snapping
-					if _G.snapEnabled ~= nil then _G.snapEnabled = uiState.snapping end
-					btn:SetAttribute("Selected", uiState.snapping)
-				elseif btnData.name == "interpolate" then
-					uiState.interpolation = not uiState.interpolation
-					if _G.interpolationEnabled ~= nil then _G.interpolationEnabled = uiState.interpolation end
-					btn:SetAttribute("Selected", uiState.interpolation)
-				elseif btnData.name == "keyframe_add" then
-					if _G.createKeyframe then
-						_G.createKeyframe(uiState.currentTime, true)
-					end
-				elseif btnData.name == "keyframe_delete" then
-					if _G.deleteKeyframe then
-						_G.deleteKeyframe(uiState.currentTime, true)
-					end
-				elseif btnData.name == "keyframe_duplicate" then
-					-- Duplica keyframe selecionado
-					if _G.selectedKeyframe and _G.copyPoseList then
-						for partName, pose in pairs(_G.selectedKeyframe.Poses or {}) do
-							if _G.copyPose then
-								_G.copyPose(partName, pose)
-							end
-						end
-					end
-				elseif btnData.name == "copy" then
-					-- Copia poses do keyframe atual
-					if _G.copyPoseList then
-						-- Limpa lista atual
-						if _G.resetCopyPoseList then _G.resetCopyPoseList() end
-						local kf = _G.getKeyframe and _G.getKeyframe(uiState.currentTime)
-						if kf and kf.Poses then
-							for partName, pose in pairs(kf.Poses) do
-								if _G.copyPose then
-									_G.copyPose(partName, pose)
-								end
-							end
-						end
-					end
-				elseif btnData.name == "paste" then
-					if _G.pastePoses then _G.pastePoses() end
-				elseif btnData.name == "bone_add" then
-					-- Adicionar bone (implementação depende do sistema)
-				elseif btnData.name == "bone_remove" then
-					-- Remover bone
-				elseif btnData.name == "mirror" then
-					-- Mirror
-				elseif btnData.name == "reset" then
-					if _G.resetKeyframeToDefaultPose and _G.selectedKeyframe then
-						_G.resetKeyframeToDefaultPose(_G.selectedKeyframe)
-					end
-				end
-			end)
-			
-			xOffset = xOffset + btn.Size.X.Offset + 2
+			styleButton(btn, data.toggle)
+			toolButtons[data.id] = btn
+			x += w + px(4)
 		end
 	end
-end
+	ui.toolbar.CanvasSize = UDim2.new(0, x + px(8), 0, 0)
 
--- ============================================================================
--- SEÇÃO 11: MENU SUPERIOR (Arquivo, Editar, Exibir, Animação, Ajuda)
--- ============================================================================
-
-local function createMenuBar()
-	local menuBar = Make("Frame", {
-		Name = "MenuBar",
-		BackgroundColor3 = COLORS.Panel,
-		BorderColor3 = COLORS.Border,
-		BorderSizePixel = 1,
-		Size = UDim2.new(1, 0, 0, 22),
-		Position = UDim2.new(0, 0, 0, 0),
-		Parent = ui.titleBar,
-		ClipsDescendants = true,
-	})
-	
-	local menus = {
-		{
-			name = "File",
-			label = "File",
-			items = {
-				{label = "New", action = "New", shortcut = "Ctrl+N"},
-				{label = "Open...", action = "Open", shortcut = "Ctrl+O"},
-				{label = "Save", action = "Save", shortcut = "Ctrl+S"},
-				{label = "Save As...", action = "SaveAs", shortcut = "Ctrl+Shift+S"},
-				{label = "Export...", action = "Export", shortcut = ""},
-				{label = "Import...", action = "Import", shortcut = ""},
-				{label = "-", action = "sep"},
-				{label = "Close", action = "Close", shortcut = "Ctrl+W"},
-			}
-		},
-		{
-			name = "Edit",
-			label = "Edit",
-			items = {
-				{label = "Undo", action = "Undo", shortcut = "Ctrl+Z"},
-				{label = "Redo", action = "Redo", shortcut = "Ctrl+Y"},
-				{label = "-", action = "sep"},
-				{label = "Copy Pose", action = "Copy", shortcut = "Ctrl+C"},
-				{label = "Paste Pose", action = "Paste", shortcut = "Ctrl+V"},
-				{label = "-", action = "sep"},
-				{label = "Select All", action = "SelectAll", shortcut = "Ctrl+A"},
-			}
-		},
-		{
-			name = "View",
-			label = "View",
-			items = {
-				{label = "Zoom In", action = "ZoomIn", shortcut = "Ctrl++"},
-				{label = "Zoom Out", action = "ZoomOut", shortcut = "Ctrl+-"},
-				{label = "Reset Zoom", action = "ResetZoom", shortcut = "Ctrl+0"},
-				{label = "-", action = "sep"},
-				{label = "Show Grid", action = "ShowGrid", shortcut = ""},
-				{label = "Show Tooltips", action = "Tooltips", shortcut = ""},
-			}
-		},
-		{
-			name = "Animation",
-			label = "Animation",
-			items = {
-				{label = "Play", action = "Play", shortcut = "Space"},
-				{label = "Stop", action = "Stop", shortcut = "Esc"},
-				{label = "-", action = "sep"},
-				{label = "Change Length...", action = "ChangeLength", shortcut = ""},
-				{label = "Set Framerate...", action = "SetFramerate", shortcut = ""},
-				{label = "Set Priority...", action = "Priority", shortcut = ""},
-				{label = "Toggle Loop", action = "Loop", shortcut = ""},
-				{label = "-", action = "sep"},
-				{label = "Add Time at Cursor", action = "AddTime", shortcut = ""},
-				{label = "Remove Time at Cursor", action = "RemoveTime", shortcut = ""},
-			}
-		},
-		{
-			name = "Help",
-			label = "Help",
-			items = {
-				{label = "Help...", action = "Help", shortcut = "F1"},
-				{label = "About", action = "About", shortcut = ""},
-			}
-		},
-	}
-	
-	local xOffset = 5
-	for _, menu in ipairs(menus) do
-		local menuBtn = Make("TextButton", {
-			Name = menu.name .. "Menu",
-			Text = menu.label,
-			Font = FONT_SETTINGS.Font,
-			TextSize = 12,
-			TextColor3 = COLORS.Text,
-			BackgroundTransparency = 1,
-			Size = UDim2.new(0, #menu.label * 7 + 10, 1, 0),
-			Position = UDim2.new(0, xOffset, 0, 0),
-			Parent = menuBar,
-		})
-		
-		menuBtn.MouseEnter:Connect(function()
-			menuBtn.BackgroundColor3 = COLORS.ButtonHover
-			menuBtn.BackgroundTransparency = 0.5
-		end)
-		menuBtn.MouseLeave:Connect(function()
-			menuBtn.BackgroundTransparency = 1
-		end)
-		
-		menuBtn.MouseButton1Click:Connect(function()
-			local options = {}
-			for _, item in ipairs(menu.items) do
-				if item.action == "sep" then
-					table.insert(options, {
-						name = "separator",
-						label = "────────────",
-						callback = function() end
-					})
-				else
-					table.insert(options, {
-						name = item.action,
-						label = item.label .. (item.shortcut ~= "" and "     " .. item.shortcut or ""),
-						callback = function()
-							-- Chama menuRequest existente
-							if _G.menuRequest then
-								_G.menuRequest(item.action)
-							else
-								-- Fallback interno
-								if item.action == "New" then
-									if _G.promptNew then _G.promptNew() end
-								elseif item.action == "Open" then
-									if _G.PromptLoad then _G.PromptLoad() end
-								elseif item.action == "Save" then
-									if _G.PromptSave then _G.PromptSave() end
-								elseif item.action == "SaveAs" then
-									local name = showTextEntryDialog("Save As:", "Animation")
-									if name and _G.saveCurrentAnimation then
-										_G.saveCurrentAnimation(name, false)
-									end
-								elseif item.action == "Export" then
-									local name = showTextEntryDialog("Export Name:", "Animation")
-									if name and _G.saveCurrentAnimation then
-										_G.saveCurrentAnimation(name, true)
-									end
-								elseif item.action == "Import" then
-									if _G.importFbxAnimation then _G.importFbxAnimation() end
-								elseif item.action == "Close" then
-									if _G.exitPlugin then _G.exitPlugin() end
-								elseif item.action == "Undo" then
-									if _G.undo then _G.undo() end
-								elseif item.action == "Redo" then
-									if _G.redo then _G.redo() end
-								elseif item.action == "Copy" then
-									-- Copy pose
-								elseif item.action == "Paste" then
-									if _G.pastePoses then _G.pastePoses() end
-								elseif item.action == "Play" then
-									if _G.playCurrentAnimation then _G.playCurrentAnimation() end
-								elseif item.action == "Stop" then
-									if _G.stopAnim ~= nil then _G.stopAnim = true end
-								elseif item.action == "ChangeLength" then
-									if _G.promptChangeLength then _G.promptChangeLength() end
-								elseif item.action == "SetFramerate" then
-									if _G.promptTickChange then _G.promptTickChange() end
-								elseif item.action == "Priority" then
-									if _G.promptChangePriority then _G.promptChangePriority() end
-								elseif item.action == "Loop" then
-									if _G.promptChangeLooping then _G.promptChangeLooping() end
-								elseif item.action == "AddTime" then
-									if _G.promptAddTime then _G.promptAddTime() end
-								elseif item.action == "RemoveTime" then
-									if _G.promptRemoveTime then _G.promptRemoveTime() end
-								elseif item.action == "ZoomIn" then
-									-- Zoom in timeline
-								elseif item.action == "ZoomOut" then
-									-- Zoom out timeline
-								elseif item.action == "Help" then
-									if _G.menuRequest then _G.menuRequest("Help") end
-								end
-							end
-						end
-					})
-				end
-			end
-			local pos = menuBtn.AbsolutePosition
-			showContextMenu(options, Vector2.new(pos.X, pos.Y + menuBtn.AbsoluteSize.Y))
-		end)
-		
-		xOffset = xOffset + menuBtn.Size.X.Offset
+	local function setActiveTool(name)
+		State.currentTool = name
+		for _, tid in ipairs({ "rotate", "move", "grow" }) do
+			toolButtons[tid]:SetAttribute("Selected", tid == name)
+		end
+		if ui.touchpad then ui.touchpad.Visible = (IS_TOUCH and State.selectedNode ~= nil) end
 	end
+	toolButtons.rotate.MouseButton1Click:Connect(function() setActiveTool("rotate") end)
+	toolButtons.move.MouseButton1Click:Connect(function() setActiveTool("move") end)
+	toolButtons.grow.MouseButton1Click:Connect(function() setActiveTool("grow") end)
+	toolButtons.rotate:SetAttribute("Selected", true)
+
+	toolButtons.new.MouseButton1Click:Connect(function()
+		if showConfirmationDialog("Começar uma nova animação? Edições não salvas serão perdidas.") then
+			State.keyframeList, State.currentTime, State.undoStack, State.redoStack = {}, 0, {}, {}
+			Editor.createKeyframe(0, false)
+			Editor.updateCursorPosition()
+			ui.refresh()
+		end
+	end)
+	toolButtons.save.MouseButton1Click:Connect(function()
+		local name = showTextEntryDialog("Save Animation As:", "Animation")
+		if name and name ~= "" then Editor.saveCurrentAnimation(name, false) end
+	end)
+	toolButtons.load.MouseButton1Click:Connect(function()
+		local names = Editor.listSavedAnimations()
+		if #names == 0 then showConfirmationDialog("Nenhuma animação salva ainda."); return end
+		local options = {}
+		for _, name in ipairs(names) do
+			table.insert(options, { label = name, callback = function()
+				Editor.loadAnimation(Editor.getSavedAnimation(name))
+				ui.refresh()
+			end })
+		end
+		showContextMenu(options, Vector2.new(mouse.X, mouse.Y))
+	end)
+	toolButtons.export.MouseButton1Click:Connect(function()
+		local name = showTextEntryDialog("Export Name:", "Animation")
+		if name and name ~= "" then Editor.saveCurrentAnimation(name, true) end
+	end)
+	toolButtons.undo.MouseButton1Click:Connect(function() Editor.undo(); ui.refresh() end)
+	toolButtons.redo.MouseButton1Click:Connect(function() Editor.redo(); ui.refresh() end)
+	toolButtons.snap:SetAttribute("Selected", State.snapEnabled)
+	toolButtons.snap.MouseButton1Click:Connect(function() State.snapEnabled = not State.snapEnabled; toolButtons.snap:SetAttribute("Selected", State.snapEnabled) end)
+	toolButtons.interp:SetAttribute("Selected", State.interpolationEnabled)
+	toolButtons.interp.MouseButton1Click:Connect(function() State.interpolationEnabled = not State.interpolationEnabled; toolButtons.interp:SetAttribute("Selected", State.interpolationEnabled); Editor.updateCursorPosition() end)
+	toolButtons.autokey.MouseButton1Click:Connect(function() toolButtons.autokey:SetAttribute("Selected", Editor.toggleAutoKey()) end)
+	toolButtons.onionskin.MouseButton1Click:Connect(function() toolButtons.onionskin:SetAttribute("Selected", Editor.toggleOnionSkin()) end)
+	toolButtons.keyframe_add.MouseButton1Click:Connect(function() Editor.captureCurrentPoseToKeyframe(); ui.refresh() end)
+	toolButtons.keyframe_delete.MouseButton1Click:Connect(function() if State.currentTime > 0 then Editor.deleteKeyframe(State.currentTime, true); ui.refresh() end end)
+	toolButtons.duplicate.MouseButton1Click:Connect(function()
+		local kf = Editor.getKeyframe(State.currentTime)
+		if kf then Editor.duplicateKeyframe(kf); ui.refresh() end
+	end)
+	toolButtons.copy.MouseButton1Click:Connect(function()
+		local kf = Editor.getKeyframe(State.currentTime)
+		if kf then
+			Editor.resetCopyPoseList()
+			for part, pose in pairs(kf.Poses) do Editor.copyPose(part, pose) end
+		end
+	end)
+	toolButtons.paste.MouseButton1Click:Connect(function() Editor.pastePoses(); ui.refresh() end)
+	toolButtons.mirror.MouseButton1Click:Connect(function() Editor.mirrorCurrentKeyframe(); ui.refresh() end)
+	toolButtons.insert_time.MouseButton1Click:Connect(function()
+		local v = tonumber(showTextEntryDialog("Insert seconds at cursor:", "0.5"))
+		if v then Editor.insertTimeAtCursor(v); ui.refresh() end
+	end)
+	toolButtons.remove_time.MouseButton1Click:Connect(function()
+		local v = tonumber(showTextEntryDialog("Remove seconds at cursor:", "0.5"))
+		if v then Editor.removeTimeAtCursor(v); ui.refresh() end
+	end)
+	toolButtons.length.MouseButton1Click:Connect(function()
+		local v = tonumber(showTextEntryDialog("Animation length (seconds):", tostring(State.animationLength)))
+		if v then Editor.setAnimationLength(v); ui.refresh() end
+	end)
+	toolButtons.framerate.MouseButton1Click:Connect(function()
+		local v = tonumber(showTextEntryDialog("Framerate (FPS):", tostring(math.floor(1 / State.frameStep))))
+		if v then Editor.setFramerate(v) end
+	end)
+	toolButtons.priority.MouseButton1Click:Connect(function()
+		local options = {}
+		for _, p in ipairs({ "Idle", "Movement", "Action", "Core" }) do
+			table.insert(options, { label = p, callback = function() Editor.setPriority(p) end })
+		end
+		showContextMenu(options, Vector2.new(mouse.X, mouse.Y))
+	end)
+	toolButtons.loop.MouseButton1Click:Connect(function()
+		State.loopAnimation = not State.loopAnimation
+		toolButtons.loop:SetAttribute("Selected", State.loopAnimation)
+		Editor.setLooping(State.loopAnimation)
+	end)
+
+	ui.setActiveTool = setActiveTool
 end
 
--- ============================================================================
--- SEÇÃO 12: PAINEL ESQUERDO (Lista de Partes)
--- ============================================================================
+-- ---- Painel esquerdo: lista de partes (vira gaveta no mobile) --------------
 
 local function createLeftPanel()
+	local width = IS_SMALL_SCREEN and px(190) or LAYOUT.LeftPanelWidth
 	ui.leftPanel = Make("Frame", {
-		Name = "LeftPanel",
-		BackgroundColor3 = COLORS.PanelDark,
-		BorderColor3 = COLORS.Border,
-		BorderSizePixel = 1,
-		Size = UDim2.new(0, WINDOW.LeftPanelWidth, 1, -(WINDOW.TitleBarHeight + WINDOW.ToolbarHeight + WINDOW.PlaybackHeight)),
-		Position = UDim2.new(0, 0, 0, WINDOW.TitleBarHeight + WINDOW.ToolbarHeight),
+		Name = "LeftPanel", BackgroundColor3 = COLORS.PanelDark, BorderColor3 = COLORS.Border, BorderSizePixel = 1,
+		Size = UDim2.new(0, width, 1, -(LAYOUT.TitleBarHeight + LAYOUT.ToolbarHeight + LAYOUT.PlaybackHeight)),
+		Position = UDim2.new(0, 0, 0, LAYOUT.TitleBarHeight + LAYOUT.ToolbarHeight),
+		Visible = not IS_SMALL_SCREEN, ZIndex = IS_SMALL_SCREEN and 20 or 1,
 		Parent = ui.mainWindow,
-		ClipsDescendants = true,
 	})
-	
-	-- Header
 	Make("TextLabel", {
-		Name = "Header",
-		Text = "Parts",
-		Font = FONT_SETTINGS.FontBold,
-		TextSize = 12,
-		TextColor3 = COLORS.Text,
-		BackgroundColor3 = COLORS.Panel,
-		BorderColor3 = COLORS.Border,
-		BorderSizePixel = 1,
-		Size = UDim2.new(1, 0, 0, 20),
-		Position = UDim2.new(0, 0, 0, 0),
-		TextXAlignment = Enum.TextXAlignment.Center,
-		Parent = ui.leftPanel,
+		Text = "Parts", Font = FONT_BOLD, TextSize = px(12), TextColor3 = COLORS.Text, BackgroundColor3 = COLORS.Panel,
+		Size = UDim2.new(1, 0, 0, px(20)), Parent = ui.leftPanel,
 	})
-	
-	-- Barra de pesquisa
-	local searchBox = Make("TextBox", {
-		Name = "SearchBox",
-		Text = "",
-		PlaceholderText = "Search parts...",
-		Font = FONT_SETTINGS.Font,
-		TextSize = 11,
-		TextColor3 = COLORS.Text,
-		BackgroundColor3 = COLORS.InputBg,
-		BorderColor3 = COLORS.Border,
-		BorderSizePixel = 1,
-		Size = UDim2.new(1, -4, 0, 20),
-		Position = UDim2.new(0, 2, 0, 22),
-		ClearTextOnFocus = false,
-		Parent = ui.leftPanel,
+	local list = Make("ScrollingFrame", {
+		Name = "PartListScroll", BackgroundTransparency = 1, BorderSizePixel = 0,
+		Size = UDim2.new(1, 0, 1, -px(20)), Position = UDim2.new(0, 0, 0, px(20)),
+		ScrollBarThickness = px(6), CanvasSize = UDim2.new(0, 0, 0, 0), Parent = ui.leftPanel,
 	})
-	
-	-- ScrollingFrame para lista de partes
-	local partListScroll = Make("ScrollingFrame", {
-		Name = "PartListScroll",
-		BackgroundTransparency = 1,
-		BorderSizePixel = 0,
-		Size = UDim2.new(1, 0, 1, -45),
-		Position = UDim2.new(0, 0, 0, 44),
-		ScrollBarThickness = 8,
-		ScrollingDirection = Enum.ScrollingDirection.Y,
-		CanvasSize = UDim2.new(1, 0, 0, 0),
-		Parent = ui.leftPanel,
-	})
-	
-	-- Linha de seleção (highlight)
-	ui.selectedLine = Make("Frame", {
-		Name = "SelectedLineHighlight",
-		BackgroundColor3 = COLORS.SelectedLine,
-		BackgroundTransparency = 0.7,
-		BorderSizePixel = 0,
-		Size = UDim2.new(1, -4, 0, 20),
-		Position = UDim2.new(0, 2, 0, 0),
-		Visible = false,
-		Parent = partListScroll,
-	})
-	
-	-- Função para atualizar lista de partes
-	local function updatePartList()
-		-- Limpa itens existentes
-		for _, child in ipairs(partListScroll:GetChildren()) do
-			if child:IsA("TextButton") then
-				child:Destroy()
-			end
+
+	local function refreshList()
+		for _, c in ipairs(list:GetChildren()) do if c:IsA("TextButton") then c:Destroy() end end
+		local y = 0
+		local rowH = px(24)
+		local ordered = {}
+		for part, node in pairs(State.partList) do table.insert(ordered, { part = part, node = node, line = State.partToLineNumber[part] or 0 }) end
+		table.sort(ordered, function(a, b) return a.line < b.line end)
+
+		for _, entry in ipairs(ordered) do
+			local included = State.partInclude[entry.part.Name]
+			local btn = Make("TextButton", {
+				Text = "  " .. entry.part.Name, Font = FONT, TextSize = px(12), TextColor3 = COLORS.Text,
+				BackgroundColor3 = included and COLORS.ButtonOn or COLORS.ButtonOff, BorderSizePixel = 0,
+				Size = UDim2.new(1, -4, 0, rowH - 2), Position = UDim2.new(0, 2, 0, y), TextXAlignment = Enum.TextXAlignment.Left,
+				Parent = list,
+			})
+			btn.MouseButton1Click:Connect(function()
+				Editor.select(entry.node)
+				if IS_SMALL_SCREEN then ui.leftPanel.Visible = false end
+			end)
+			y += rowH
 		end
-		
-		local partList = _G.partList or {}
-		local partToLineNumber = _G.partToLineNumber or {}
-		local partInclude = _G.partInclude or {}
-		local yOffset = 0
-		
-		for part, itemData in pairs(partList) do
-			local lineNum = partToLineNumber[part]
-			if lineNum then
-				local isIncluded = partInclude[part.Name] or false
-				local indent = 0
-				local parent = itemData.Parent
-				while parent do
-					indent = indent + 1
-					parent = parent.Parent
-				end
-				
-				local partBtn = Make("TextButton", {
-					Name = "Part_" .. part.Name,
-					Text = string.rep("  ", indent) .. (part.Name == "HumanoidRootPart" and "" or part.Name),
-					Font = FONT_SETTINGS.Font,
-					TextSize = 11,
-					TextColor3 = COLORS.Text,
-					BackgroundColor3 = isIncluded and COLORS.ButtonOn or COLORS.ButtonOff,
-					BorderSizePixel = 0,
-					Size = UDim2.new(1, -8, 0, 20),
-					Position = UDim2.new(0, 4, 0, yOffset),
-					TextXAlignment = Enum.TextXAlignment.Left,
-					Parent = partListScroll,
-				})
-				
-				-- Ícone de expansão (se tiver filhos)
-				if itemData.Children and #itemData.Children > 0 then
-					Make("TextLabel", {
-						Name = "ExpandIcon",
-						Text = "▶",
-						Font = FONT_SETTINGS.Font,
-						TextSize = 8,
-						TextColor3 = COLORS.TextDark,
-						BackgroundTransparency = 1,
-						Size = UDim2.new(0, 12, 0, 12),
-						Position = UDim2.new(0, 2, 0, 4),
-						Parent = partBtn,
-					})
-				end
-				
-				-- Clique para selecionar parte
-				partBtn.MouseButton1Click:Connect(function()
-					if _G.setHandleSelection then
-						_G.setHandleSelection(itemData)
-					end
-					-- Atualiza highlight
-					ui.selectedLine.Position = UDim2.new(0, 2, 0, yOffset)
-					ui.selectedLine.Visible = true
-				end)
-				
-				-- Clique direito para menu de contexto
-				partBtn.MouseButton2Click:Connect(function()
-					local options = {
-						{name = "select", label = "Select", callback = function()
-							if _G.setHandleSelection then _G.setHandleSelection(itemData) end
-						end},
-						{name = "include", label = isIncluded and "Exclude" or "Include", callback = function()
-							if _G.partInclude then
-								_G.partInclude[part.Name] = not isIncluded
-							end
-							updatePartList()
-						end},
-						{name = "rename", label = "Rename", callback = function()
-							local newName = showTextEntryDialog("Rename Part:", part.Name)
-							if newName and newName ~= "" then
-								-- Renomeia (se suportado pelo sistema)
-							end
-						end},
-					}
-					showContextMenu(options, Vector2.new(mouse.X, mouse.Y))
-				end)
-				
-				yOffset = yOffset + 20
-			end
-		end
-		
-		partListScroll.CanvasSize = UDim2.new(1, 0, 0, yOffset)
+		list.CanvasSize = UDim2.new(0, 0, 0, y)
 	end
-	
-	-- Atualiza quando partList mudar
-	-- (Na prática, seria chamado pelo sistema de animação)
-	
-	-- Botão de filtro
-	local filterBtn = Make("TextButton", {
-		Name = "FilterBtn",
-		Text = "Filter",
-		Font = FONT_SETTINGS.Font,
-		TextSize = 10,
-		TextColor3 = COLORS.Text,
-		BackgroundColor3 = COLORS.ButtonOff,
-		BorderColor3 = COLORS.Border,
-		BorderSizePixel = 1,
-		Size = UDim2.new(0, 40, 0, 18),
-		Position = UDim2.new(1, -42, 0, 23),
-		Parent = ui.leftPanel,
-	})
-	styleButton(filterBtn)
+	ui.refreshPartList = refreshList
 end
 
--- ============================================================================
--- SEÇÃO 13: TIMELINE (A parte mais detalhada)
--- ============================================================================
+-- ---- Timeline ----------------------------------------------------------------
 
 local function createTimeline()
-	local timelineY = WINDOW.TitleBarHeight + WINDOW.ToolbarHeight
-	local timelineHeight = WINDOW.TimelineHeight
-	
+	local timelineHeight = math.max(LAYOUT.TimelineMinHeight, px(160))
 	ui.timelinePanel = Make("Frame", {
-		Name = "TimelinePanel",
-		BackgroundColor3 = COLORS.TimelineBg,
-		BorderColor3 = COLORS.Border,
-		BorderSizePixel = 1,
-		Size = UDim2.new(1, -(WINDOW.LeftPanelWidth + WINDOW.RightPanelWidth), 0, timelineHeight),
-		Position = UDim2.new(0, WINDOW.LeftPanelWidth, 0, timelineY),
-		Parent = ui.mainWindow,
-		ClipsDescendants = true,
+		Name = "TimelinePanel", BackgroundColor3 = COLORS.Background, BorderColor3 = COLORS.Border, BorderSizePixel = 1,
+		Size = UDim2.new(1, -(LAYOUT.LeftPanelWidth + LAYOUT.RightPanelWidth), 0, timelineHeight),
+		Position = UDim2.new(0, LAYOUT.LeftPanelWidth, 0, LAYOUT.TitleBarHeight + LAYOUT.ToolbarHeight),
+		ClipsDescendants = true, Parent = ui.mainWindow,
 	})
-	
-	-- Container principal da timeline com scroll
-	local keyframeContainer = Make("ScrollingFrame", {
-		Name = "KeyframeContainer",
-		BackgroundColor3 = COLORS.TimelineBg,
-		BorderSizePixel = 0,
-		Size = UDim2.new(1, 0, 1, 0),
-		Position = UDim2.new(0, 0, 0, 0),
-		CanvasSize = UDim2.new(0, 2000, 1, 0),
-		ScrollBarThickness = 8,
-		ScrollingDirection = Enum.ScrollingDirection.XY,
-		Parent = ui.timelinePanel,
+
+	local scroll = Make("ScrollingFrame", {
+		Name = "KeyframeContainer", BackgroundColor3 = COLORS.Background, BorderSizePixel = 0,
+		Size = UDim2.new(1, 0, 1, 0), CanvasSize = UDim2.new(0, 1600, 1, 0),
+		ScrollBarThickness = px(6), ScrollingDirection = Enum.ScrollingDirection.X, Parent = ui.timelinePanel,
 	})
-	
-	-- Régua de tempo (TimeListFrame)
-	local timeListFrame = Make("Frame", {
-		Name = "TimeListFrame",
-		BackgroundColor3 = COLORS.Panel,
-		BorderSizePixel = 0,
-		Size = UDim2.new(1, 0, 0, 15),
-		Position = UDim2.new(0, 0, 0, 0),
-		Parent = keyframeContainer,
-		ZIndex = 3,
+
+	local ruler = Make("Frame", { Name = "Ruler", BackgroundColor3 = COLORS.Panel, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, px(16)), Parent = scroll })
+	local track = Make("TextButton", {
+		Name = "Track", Text = "", AutoButtonColor = false, BackgroundColor3 = COLORS.Panel, BackgroundTransparency = 0.6,
+		BorderSizePixel = 0, Size = UDim2.new(1, 0, 1, -px(16)), Position = UDim2.new(0, 0, 0, px(16)), Parent = scroll,
 	})
-	
-	-- Frame da timeline (área de keyframes)
-	local timelineFrame = Make("TextButton", {
-		Name = "TimelineFrame",
-		Text = "",
-		AutoButtonColor = false,
-		BackgroundColor3 = COLORS.TimelineLine,
-		BackgroundTransparency = 0.9,
-		BorderSizePixel = 0,
-		Size = UDim2.new(1, 0, 0, 15),
-		Position = UDim2.new(0, 0, 0, 20),
-		Parent = keyframeContainer,
-		ZIndex = 2,
+
+	local cursorLine = Make("Frame", {
+		Name = "CursorLine", BackgroundColor3 = COLORS.Accent, BorderSizePixel = 0,
+		Size = UDim2.new(0, px(2), 1, 0), Position = UDim2.new(0, 0, 0, 0), ZIndex = 5, Parent = scroll,
 	})
-	
-	-- Grade de fundo
-	local gridFrame = Make("Frame", {
-		Name = "GridFrame",
-		BackgroundTransparency = 1,
-		BorderSizePixel = 0,
-		Size = UDim2.new(1, 0, 1, -35),
-		Position = UDim2.new(0, 0, 0, 35),
-		Parent = keyframeContainer,
-		ZIndex = 1,
-	})
-	
-	-- Cursor (vermelho/azul)
-	ui.cursor = Make("Frame", {
-		Name = "Cursor",
-		BackgroundColor3 = COLORS.Accent,
-		BorderColor3 = COLORS.Accent,
-		BorderSizePixel = 1,
-		Size = UDim2.new(0, 19, 0, 19),
-		Position = UDim2.new(0, 117, 0, 20),
-		ZIndex = 4,
-		Parent = keyframeContainer,
-		Make("Frame", {
-			Name = "CursorLine",
-			BackgroundColor3 = COLORS.Accent,
-			BorderSizePixel = 0,
-			Size = UDim2.new(0, 2, 1000, 0),
-			Position = UDim2.new(0, 7.5, 0, 0),
-			ZIndex = 1,
-			Parent = nil, -- Será parenteado depois
-		}),
-		Make("TextLabel", {
-			Name = "CursorText",
-			Text = "▼",
-			Font = FONT_SETTINGS.Font,
-			TextSize = 14,
-			TextColor3 = COLORS.Text,
-			BackgroundTransparency = 1,
-			Size = UDim2.new(1, 0, 1, 0),
-			Position = UDim2.new(0, 0, 0, 0),
-			TextXAlignment = Enum.TextXAlignment.Center,
-			TextYAlignment = Enum.TextYAlignment.Center,
-			ZIndex = 4,
-			Parent = nil,
-		}),
-	})
-	
-	-- Parenteia filhos do cursor corretamente
-	ui.cursor.CursorLine.Parent = ui.cursor
-	ui.cursor.CursorText.Parent = ui.cursor
-	
-	-- Arrastar cursor
-	local draggingCursor = false
-	ui.cursor.InputBegan:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1 then
-			draggingCursor = true
-			keyframeContainer.ScrollingEnabled = false
-		end
-	end)
-	
-	UserInputService.InputChanged:Connect(function(input)
-		if draggingCursor and input.UserInputType == Enum.UserInputType.MouseMovement then
-			local relX = mouse.X - keyframeContainer.AbsolutePosition.X + keyframeContainer.CanvasPosition.X
-			local newTime = relX / (2000 / (uiState.animationLength or 2))
-			newTime = math.clamp(newTime, 0, uiState.animationLength or 2)
-			
-			-- Snapping
-			if uiState.snapping then
-				local snap = 0.05
-				newTime = math.floor(newTime / snap + 0.5) * snap
-			end
-			
-			uiState.currentTime = newTime
-			if _G.currentTime ~= nil then _G.currentTime = newTime end
-			
-			-- Atualiza posição visual
-			local pixelsPerSecond = 2000 / (uiState.animationLength or 2)
-			ui.cursor.Position = UDim2.new(0, newTime * pixelsPerSecond - 9.5, 0, 20)
-			
-			-- Chama update do sistema
-			if _G.updateCursorPosition then
-				_G.updateCursorPosition()
-			end
-		end
-	end)
-	
-	UserInputService.InputEnded:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1 then
-			draggingCursor = false
-			keyframeContainer.ScrollingEnabled = true
-		end
-	end)
-	
-	-- Clicar na timeline para mover cursor
-	timelineFrame.MouseButton1Click:Connect(function()
-		local relX = mouse.X - timelineFrame.AbsolutePosition.X + keyframeContainer.CanvasPosition.X
-		local newTime = relX / (2000 / (uiState.animationLength or 2))
-		newTime = math.clamp(newTime, 0, uiState.animationLength or 2)
-		uiState.currentTime = newTime
-		if _G.currentTime ~= nil then _G.currentTime = newTime end
-		
-		local pixelsPerSecond = 2000 / (uiState.animationLength or 2)
-		ui.cursor.Position = UDim2.new(0, newTime * pixelsPerSecond - 9.5, 0, 20)
-		
-		if _G.updateCursorPosition then
-			_G.updateCursorPosition()
-		end
-	end)
-	
-	-- Zoom buttons (dentro do painel timeline)
-	local zoomInBtn = Make("TextButton", {
-		Name = "ZoomIn",
-		Text = "+",
-		Font = FONT_SETTINGS.FontBold,
-		TextSize = 14,
-		TextColor3 = COLORS.Text,
-		BackgroundColor3 = COLORS.ButtonOff,
-		BorderColor3 = COLORS.Border,
-		BorderSizePixel = 1,
-		Size = UDim2.new(0, 20, 0, 20),
-		Position = UDim2.new(1, -26, 1, -48),
-		Parent = ui.timelinePanel,
-		ZIndex = 5,
-	})
-	styleButton(zoomInBtn)
-	zoomInBtn.MouseButton1Click:Connect(function()
-		uiState.zoomLevel = uiState.zoomLevel * 1.2
-		local newWidth = 2000 * uiState.zoomLevel
-		keyframeContainer.CanvasSize = UDim2.new(0, newWidth, 1, 0)
-	end)
-	
-	local zoomOutBtn = Make("TextButton", {
-		Name = "ZoomOut",
-		Text = "-",
-		Font = FONT_SETTINGS.FontBold,
-		TextSize = 14,
-		TextColor3 = COLORS.Text,
-		BackgroundColor3 = COLORS.ButtonOff,
-		BorderColor3 = COLORS.Border,
-		BorderSizePixel = 1,
-		Size = UDim2.new(0, 20, 0, 20),
-		Position = UDim2.new(1, -26, 1, -26),
-		Parent = ui.timelinePanel,
-		ZIndex = 5,
-	})
-	styleButton(zoomOutBtn)
-	zoomOutBtn.MouseButton1Click:Connect(function()
-		uiState.zoomLevel = math.max(0.5, uiState.zoomLevel / 1.2)
-		local newWidth = 2000 * uiState.zoomLevel
-		keyframeContainer.CanvasSize = UDim2.new(0, newWidth, 1, 0)
-	end)
-	
-	Make("TextLabel", {
-		Name = "ZoomLabel",
-		Text = "Zoom",
-		Font = FONT_SETTINGS.Font,
-		TextSize = 10,
-		TextColor3 = COLORS.TextDark,
-		BackgroundTransparency = 1,
-		Size = UDim2.new(0, 30, 0, 14),
-		Position = UDim2.new(1, -31, 1, -65),
-		Parent = ui.timelinePanel,
-		ZIndex = 5,
-	})
-	
-	-- Atualiza labels de tempo
-	local function updateTimeLabels()
-		-- Limpa labels antigos
-		for _, child in ipairs(timeListFrame:GetChildren()) do
-			if child:IsA("TextLabel") then
-				child:Destroy()
-			end
-		end
-		
-		local animLength = uiState.animationLength or 2
-		local numTicks = 20
-		local pixelsPerSecond = keyframeContainer.CanvasSize.X.Offset / animLength
-		
-		for i = 0, numTicks do
-			local time = (i / numTicks) * animLength
-			local xPos = time * pixelsPerSecond
-			
-			local tickLabel = Make("TextLabel", {
-				Name = "Tick" .. i,
-				Text = string.format("%.2f", time),
-				Font = FONT_SETTINGS.Font,
-				TextSize = 9,
-				TextColor3 = COLORS.TextDark,
-				BackgroundTransparency = 1,
-				Size = UDim2.new(0, 30, 0, 12),
-				Position = UDim2.new(0, xPos, 0, 1),
-				TextXAlignment = Enum.TextXAlignment.Left,
-				Parent = timeListFrame,
-				ZIndex = 3,
-			})
-			
-			-- Indicador vertical
-			Make("Frame", {
-				Name = "TickIndicator",
-				BackgroundColor3 = COLORS.TextDark,
-				BackgroundTransparency = 0.8,
-				BorderSizePixel = 0,
-				Size = UDim2.new(0, 1, 0, 1000),
-				Position = UDim2.new(0, xPos + 2, 0, 14),
-				Parent = timeListFrame,
-				ZIndex = 1,
-			})
-		end
+
+	local function pixelsPerSecond()
+		return scroll.CanvasSize.X.Offset / math.max(0.001, State.animationLength)
 	end
-	
-	-- Atualiza quando animationLength mudar
-	-- (Chamado pelo sistema de animação)
-	
-	-- Função para desenhar keyframes na timeline
-	local function drawKeyframes()
-		-- Limpa keyframes visuais antigos
-		for _, child in ipairs(timelineFrame:GetChildren()) do
-			if child.Name:match("^Keyframe") then
-				child:Destroy()
-			end
+
+	local function timeFromX(absoluteX)
+		local relX = absoluteX - track.AbsolutePosition.X + scroll.CanvasPosition.X
+		return math.clamp(relX / pixelsPerSecond(), 0, State.animationLength)
+	end
+
+	local function moveCursorTo(t)
+		State.currentTime = clampTime(t)
+		cursorLine.Position = UDim2.new(0, State.currentTime * pixelsPerSecond(), 0, 0)
+		Editor.updateCursorPosition()
+		if ui.updateTimeLabel then ui.updateTimeLabel() end
+	end
+
+	local scrubbing = false
+	track.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			scrubbing = true
+			moveCursorTo(timeFromX(input.Position.X))
 		end
-		
-		local keyframeList = _G.keyframeList or {}
-		local animLength = uiState.animationLength or 2
-		local pixelsPerSecond = keyframeContainer.CanvasSize.X.Offset / animLength
-		
-		for time, kfData in pairs(keyframeList) do
-			local xPos = time * pixelsPerSecond
-			
-			-- Linha vertical do keyframe
-			local kfLine = Make("Frame", {
-				Name = "Keyframe" .. time,
-				BackgroundColor3 = COLORS.Keyframe,
-				BorderSizePixel = 0,
-				Size = UDim2.new(0, 2, 1, 0),
-				Position = UDim2.new(0, xPos, 0, 0),
-				Parent = timelineFrame,
-				ZIndex = 2,
+	end)
+	UserInputService.InputChanged:Connect(function(input)
+		if scrubbing and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+			moveCursorTo(timeFromX(input.Position.X))
+		end
+	end)
+	UserInputService.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			scrubbing = false
+		end
+	end)
+
+	-- Pinch-to-zoom (dois dedos) para telas de toque
+	if IS_TOUCH then
+		local activeTouches = {}
+		UserInputService.TouchPinch:Connect(function(touchPositions, scaleDelta, velocityDelta, state)
+			if state == Enum.UserInputState.Change then
+				State.zoomLevel = math.clamp(State.zoomLevel * scaleDelta, 0.5, 6)
+				scroll.CanvasSize = UDim2.new(0, 1600 * State.zoomLevel, 1, 0)
+			end
+		end)
+	end
+
+	local function refreshKeyframes()
+		for _, c in ipairs(track:GetChildren()) do if c.Name:match("^Kf_") then c:Destroy() end end
+		local pps = pixelsPerSecond()
+		local diamondSize = px(16)
+		for time, kf in pairs(State.keyframeList) do
+			local xPos = time * pps
+			local selected = State.selectedKeyframes[time]
+			local btn = Make("TextButton", {
+				Name = "Kf_" .. tostring(time), Text = "", BackgroundColor3 = selected and COLORS.KeyframeSelected or COLORS.Keyframe,
+				Rotation = 45, Size = UDim2.new(0, diamondSize, 0, diamondSize),
+				Position = UDim2.new(0, xPos - diamondSize / 2, 0, px(6)), Parent = track, ZIndex = 3,
 			})
-			
-			-- Botão do keyframe (diamante/quadrado)
-			local kfButton = Make("TextButton", {
-				Name = "KeyframeBtn" .. time,
-				Text = "kf",
-				Font = FONT_SETTINGS.Font,
-				TextSize = 8,
-				TextColor3 = COLORS.Text,
-				BackgroundColor3 = COLORS.Keyframe,
-				BorderSizePixel = 0,
-				Size = UDim2.new(0, 15, 0, 15),
-				Position = UDim2.new(0, xPos - 6, 0, 0),
-				Parent = timelineFrame,
-				ZIndex = 3,
-			})
-			
-			-- Hover e seleção
-			kfButton.MouseEnter:Connect(function()
-				kfButton.BackgroundColor3 = COLORS.KeyframeSelected
+			btn.MouseButton1Click:Connect(function()
+				State.selectedKeyframe = kf
+				State.selectedKeyframes = { [time] = true }
+				moveCursorTo(time)
+				if ui.updateProperties then ui.updateProperties() end
+				refreshKeyframes()
 			end)
-			kfButton.MouseLeave:Connect(function()
-				if not (uiState.selectedKeyframes[time]) then
-					kfButton.BackgroundColor3 = COLORS.Keyframe
+			-- Long-press / clique direito = menu de contexto (funciona em touch como "toque e segure" simulado por tempo mínimo)
+			local pressStart = 0
+			btn.InputBegan:Connect(function(input)
+				if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+					pressStart = tick()
 				end
 			end)
-			
-			-- Clique para selecionar
-			kfButton.MouseButton1Click:Connect(function()
-				uiState.selectedKeyframes = {[time] = true}
-				_G.selectedKeyframe = kfData
-				kfButton.BackgroundColor3 = COLORS.KeyframeSelected
-			end)
-			
-			-- Clique duplo
-			local lastClick = 0
-			kfButton.MouseButton1Click:Connect(function()
-				local now = tick()
-				if now - lastClick < 0.3 then
-					-- Duplo clique - menu de contexto
-					if _G.keyframeContextMenu then
-						_G.keyframeContextMenu(xPos, 0, false)
-					end
+			btn.InputEnded:Connect(function(input)
+				if (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) and tick() - pressStart > 0.45 then
+					local options = {
+						{ label = "Duplicate", callback = function() Editor.duplicateKeyframe(kf); ui.refresh() end },
+						{ label = "Mirror", callback = function() Editor.mirrorCurrentKeyframe(); ui.refresh() end },
+						{ label = "Delete", callback = function() if time > 0 then Editor.deleteKeyframe(time, true); ui.refresh() end end },
+					}
+					showContextMenu(options, Vector2.new(input.Position.X, input.Position.Y))
 				end
-				lastClick = now
 			end)
-			
-			-- Clique direito
-			kfButton.MouseButton2Click:Connect(function()
+			btn.MouseButton2Click:Connect(function()
 				local options = {
-					{name = "create", label = "Create Keyframe", callback = function()
-						if _G.createKeyframe then _G.createKeyframe(time, true) end
-					end},
-					{name = "delete", label = "Delete", callback = function()
-						if time > 0 and _G.deleteKeyframe then
-							_G.deleteKeyframe(time, true)
-						end
-					end},
-					{name = "copy", label = "Copy Pose", callback = function()
-						if kfData.Poses then
-							for partName, pose in pairs(kfData.Poses) do
-								if _G.copyPose then _G.copyPose(partName, pose) end
-							end
-						end
-					end},
-					{name = "paste", label = "Paste Pose", callback = function()
-						if _G.pastePoses then _G.pastePoses() end
-					end},
-					{name = "duplicate", label = "Duplicate", callback = function()
-						-- Duplica keyframe
-					end},
-					{name = "rename", label = "Rename", callback = function()
-						local newName = showTextEntryDialog("Keyframe Name:", kfData.Name or "Keyframe")
-						if newName then
-							kfData.Name = newName
-						end
-					end},
-					{name = "easing", label = "Easing...", callback = function()
-						-- Abre dialog de easing
-					end},
+					{ label = "Duplicate", callback = function() Editor.duplicateKeyframe(kf); ui.refresh() end },
+					{ label = "Mirror", callback = function() Editor.mirrorCurrentKeyframe(); ui.refresh() end },
+					{ label = "Delete", callback = function() if time > 0 then Editor.deleteKeyframe(time, true); ui.refresh() end end },
 				}
 				showContextMenu(options, Vector2.new(mouse.X, mouse.Y))
 			end)
-			
-			-- Arrastar keyframe
-			local draggingKf = false
-			kfButton.InputBegan:Connect(function(input)
-				if input.UserInputType == Enum.UserInputType.MouseButton1 then
-					draggingKf = true
-					_G.selectedKeyframe = kfData
-					if _G.lockUndoStep then
-						_G.lockUndoStep("keyframeMove")
-					end
-				end
-			end)
-			
-			UserInputService.InputChanged:Connect(function(input)
-				if draggingKf and input.UserInputType == Enum.UserInputType.MouseMovement then
-					local relX = mouse.X - timelineFrame.AbsolutePosition.X + keyframeContainer.CanvasPosition.X
-					local newTime = relX / pixelsPerSecond
-					newTime = math.clamp(newTime, 0, animLength)
-					
-					if uiState.snapping then
-						local snap = 0.05
-						newTime = math.floor(newTime / snap + 0.5) * snap
-					end
-					
-					-- Move visualmente
-					kfLine.Position = UDim2.new(0, newTime * pixelsPerSecond, 0, 0)
-					kfButton.Position = UDim2.new(0, newTime * pixelsPerSecond - 6, 0, 0)
-				end
-			end)
-			
-			UserInputService.InputEnded:Connect(function(input)
-				if input.UserInputType == Enum.UserInputType.MouseButton1 and draggingKf then
-					draggingKf = false
-					local relX = mouse.X - timelineFrame.AbsolutePosition.X + keyframeContainer.CanvasPosition.X
-					local newTime = relX / pixelsPerSecond
-					newTime = math.clamp(newTime, 0, animLength)
-					
-					if uiState.snapping then
-						local snap = 0.05
-						newTime = math.floor(newTime / snap + 0.5) * snap
-					end
-					
-					-- Move o keyframe no sistema
-					if _G.moveKeyframe then
-						_G.moveKeyframe(kfData, newTime)
-					end
-				end
-			end)
 		end
 	end
-	
-	-- Atualiza keyframes quando a lista mudar
-	-- (Chamado pelo sistema de animação)
-	
-	-- Desenha poses (diamantes) na timeline
-	local function drawPoses()
-		-- Limpa poses antigas
-		for _, child in ipairs(gridFrame:GetChildren()) do
-			if child.Name:match("^Pose") then
-				child:Destroy()
-			end
-		end
-		
-		local keyframeList = _G.keyframeList or {}
-		local partToLineNumber = _G.partToLineNumber or {}
-		local pixelsPerSecond = keyframeContainer.CanvasSize.X.Offset / (uiState.animationLength or 2)
-		
-		for time, kfData in pairs(keyframeList) do
-			if kfData.Poses then
-				for part, pose in pairs(kfData.Poses) do
-					local lineNum = partToLineNumber[part]
-					if lineNum then
-						local yPos = (lineNum - 1) * 20 + 6
-						local xPos = time * pixelsPerSecond
-						
-						-- Determina cor baseada no easing
-						local poseColor = COLORS.Keyframe
-						if pose.EasingStyle then
-							local styleName = pose.EasingStyle.Name or tostring(pose.EasingStyle)
-							if styleName == "Constant" then
-								poseColor = Color3.new(0.533, 0.533, 0.533)
-							elseif styleName == "Cubic" then
-								poseColor = Color3.new(0.439, 0.176, 0)
-							elseif styleName == "CubicV2" then
-								poseColor = Color3.new(1, 0.415, 0)
-							elseif styleName == "Elastic" then
-								poseColor = Color3.new(0.094, 0.274, 0.113)
-							elseif styleName == "Bounce" then
-								poseColor = Color3.new(0.639, 0.231, 0.8)
-							end
-						end
-						
-						-- Verifica se está copiado
-						local copyPoseList = _G.copyPoseList or {}
-						if copyPoseList[part.Name] == pose then
-							poseColor = COLORS.KeyframeSelected
-						end
-						
-						local poseBtn = Make("TextButton", {
-							Name = "Pose" .. part.Name .. "_" .. time,
-							Text = "",
-							BackgroundColor3 = poseColor,
-							BorderSizePixel = 0,
-							Size = UDim2.new(0, 13, 0, 13),
-							Position = UDim2.new(0, xPos - 6.5, 0, yPos),
-							Parent = gridFrame,
-							ZIndex = 3,
-						})
-						
-						-- Rotação para parecer diamante
-						poseBtn.Rotation = 45
-						
-						-- Hover
-						poseBtn.MouseEnter:Connect(function()
-							poseBtn.BackgroundColor3 = COLORS.ButtonHover
-						end)
-						poseBtn.MouseLeave:Connect(function()
-							poseBtn.BackgroundColor3 = poseColor
-						end)
-						
-						-- Clique
-						poseBtn.MouseButton1Click:Connect(function()
-							if _G.copyPose then
-								_G.copyPose(part, pose)
-							end
-						end)
-						
-						-- Clique direito
-						poseBtn.MouseButton2Click:Connect(function()
-							local options = {
-								{name = "copy", label = "Copy Pose", callback = function()
-									if _G.copyPose then _G.copyPose(part, pose) end
-								end},
-								{name = "delete", label = "Delete Pose", callback = function()
-									if time > 0 and _G.deletePose then
-										_G.deletePose(kfData, part)
-									end
-								end},
-								{name = "easing", label = "Easing...", callback = function()
-									-- Abre selector de easing
-									if _G.MenuHandler and _G.MenuHandler.SetEasingStyle then
-										uiState.modal = true
-										_G.MenuHandler.SetEasingStyle(pose, function()
-											uiState.modal = false
-											if pose.updateColor then pose.updateColor() end
-										end)
-									end
-								end},
-							}
-							showContextMenu(options, Vector2.new(mouse.X, mouse.Y))
-						end)
-					end
-				end
-			end
+
+	local function refreshRuler()
+		for _, c in ipairs(ruler:GetChildren()) do c:Destroy() end
+		local pps = pixelsPerSecond()
+		local ticks = math.max(4, math.floor(State.animationLength / State.frameStep / 6))
+		for i = 0, ticks do
+			local t = (i / ticks) * State.animationLength
+			Make("TextLabel", {
+				Text = string.format("%.2f", t), Font = FONT_MONO, TextSize = px(9), TextColor3 = COLORS.TextDark,
+				BackgroundTransparency = 1, Size = UDim2.new(0, px(34), 1, 0), Position = UDim2.new(0, t * pps, 0, 0), Parent = ruler,
+			})
 		end
 	end
-	
-	-- Sincroniza scroll vertical com lista de partes
-	-- (Implementado via eventos do sistema existente)
-	
-	-- Atualiza visual quando necessário
-	local function refreshTimeline()
-		updateTimeLabels()
-		drawKeyframes()
-		drawPoses()
+
+	local function zoomToFit()
+		State.zoomLevel = 1
+		scroll.CanvasSize = UDim2.new(0, 1600, 1, 0)
+		refreshRuler()
+		refreshKeyframes()
+		moveCursorTo(State.currentTime)
 	end
-	
-	-- Expõe função para o sistema chamar
-	ui.refreshTimeline = refreshTimeline
+
+	ui.refreshTimeline = function()
+		refreshRuler()
+		refreshKeyframes()
+		cursorLine.Position = UDim2.new(0, State.currentTime * pixelsPerSecond(), 0, 0)
+	end
+	ui.zoomToFit = zoomToFit
+	zoomToFit()
 end
 
--- ============================================================================
--- SEÇÃO 14: PAINEL DIREITO (Propriedades)
--- ============================================================================
+-- ---- Touchpad virtual (rotate/move/grow no toque) ---------------------------
+
+local function createTouchpad()
+	if not IS_TOUCH then return end
+	ui.touchpad = Make("Frame", {
+		Name = "ToolTouchpad", BackgroundColor3 = COLORS.PanelDark, BackgroundTransparency = 0.15, BorderColor3 = COLORS.Border, BorderSizePixel = 1,
+		Size = UDim2.new(0, LAYOUT.TouchPadSize, 0, LAYOUT.TouchPadSize),
+		Position = UDim2.new(1, -LAYOUT.TouchPadSize - px(10), 1, -LAYOUT.TouchPadSize - LAYOUT.PlaybackHeight - px(10)),
+		Visible = false, ZIndex = 15, Parent = ui.mainWindow,
+	})
+	Make("TextLabel", {
+		Text = "arraste para editar", Font = FONT, TextSize = px(10), TextColor3 = COLORS.TextDark, BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, px(14)), Position = UDim2.new(0, 0, 1, -px(14)), Parent = ui.touchpad,
+	})
+
+	local dragging = false
+	local lastPos = Vector2.new()
+	ui.touchpad.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+			dragging = true
+			lastPos = Vector2.new(input.Position.X, input.Position.Y)
+			Editor.lockUndoStep(State.currentTool)
+			Editor.registerUndo({ action = State.currentTool })
+		end
+	end)
+	UserInputService.InputChanged:Connect(function(input)
+		if dragging and (input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseMovement) then
+			local pos = Vector2.new(input.Position.X, input.Position.Y)
+			local delta = pos - lastPos
+			lastPos = pos
+
+			if State.currentTool == "rotate" then
+				Editor.onToolDrag(Vector2.new(delta.X * 0.5, delta.Y * 0.5))
+			elseif State.currentTool == "move" then
+				Editor.onToolDrag(Vector3.new(delta.X * 0.02, -delta.Y * 0.02, 0))
+			elseif State.currentTool == "grow" then
+				local factor = 1 + (-delta.Y) * 0.003
+				Editor.onToolDrag(factor)
+			end
+			Editor.lockUndoStep(State.currentTool)
+			if ui.refreshTimeline then ui.refreshTimeline() end
+		end
+	end)
+	UserInputService.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+			dragging = false
+		end
+	end)
+
+	Editor.onSelectionChanged(function(node)
+		ui.touchpad.Visible = node ~= nil
+	end)
+end
+
+-- ---- Painel direito: propriedades (vira gaveta no mobile) -------------------
 
 local function createRightPanel()
+	local width = IS_SMALL_SCREEN and px(220) or LAYOUT.RightPanelWidth
 	ui.rightPanel = Make("Frame", {
-		Name = "RightPanel",
-		BackgroundColor3 = COLORS.PanelDark,
-		BorderColor3 = COLORS.Border,
-		BorderSizePixel = 1,
-		Size = UDim2.new(0, WINDOW.RightPanelWidth, 1, -(WINDOW.TitleBarHeight + WINDOW.ToolbarHeight + WINDOW.PlaybackHeight)),
-		Position = UDim2.new(1, -WINDOW.RightPanelWidth, 0, WINDOW.TitleBarHeight + WINDOW.ToolbarHeight),
+		Name = "RightPanel", BackgroundColor3 = COLORS.PanelDark, BorderColor3 = COLORS.Border, BorderSizePixel = 1,
+		Size = UDim2.new(0, width, 1, -(LAYOUT.TitleBarHeight + LAYOUT.ToolbarHeight + LAYOUT.PlaybackHeight)),
+		Position = UDim2.new(1, -width, 0, LAYOUT.TitleBarHeight + LAYOUT.ToolbarHeight),
+		Visible = not IS_SMALL_SCREEN, ZIndex = IS_SMALL_SCREEN and 20 or 1,
 		Parent = ui.mainWindow,
-		ClipsDescendants = true,
 	})
-	
-	-- Header
-	Make("TextLabel", {
-		Name = "Header",
-		Text = "Properties",
-		Font = FONT_SETTINGS.FontBold,
-		TextSize = 12,
-		TextColor3 = COLORS.Text,
-		BackgroundColor3 = COLORS.Panel,
-		BorderColor3 = COLORS.Border,
-		BorderSizePixel = 1,
-		Size = UDim2.new(1, 0, 0, 20),
-		Position = UDim2.new(0, 0, 0, 0),
-		TextXAlignment = Enum.TextXAlignment.Center,
-		Parent = ui.rightPanel,
+	Make("TextLabel", { Text = "Properties", Font = FONT_BOLD, TextSize = px(12), TextColor3 = COLORS.Text, BackgroundColor3 = COLORS.Panel, Size = UDim2.new(1, 0, 0, px(20)), Parent = ui.rightPanel })
+	local scroll = Make("ScrollingFrame", {
+		Name = "PropsScroll", BackgroundTransparency = 1, BorderSizePixel = 0, Size = UDim2.new(1, 0, 1, -px(20)), Position = UDim2.new(0, 0, 0, px(20)),
+		ScrollBarThickness = px(6), CanvasSize = UDim2.new(0, 0, 0, 300), Parent = ui.rightPanel,
 	})
-	
-	-- ScrollingFrame para propriedades
-	local propsScroll = Make("ScrollingFrame", {
-		Name = "PropertiesScroll",
-		BackgroundTransparency = 1,
-		BorderSizePixel = 0,
-		Size = UDim2.new(1, 0, 1, -22),
-		Position = UDim2.new(0, 0, 0, 22),
-		ScrollBarThickness = 8,
-		ScrollingDirection = Enum.ScrollingDirection.Y,
-		CanvasSize = UDim2.new(1, 0, 0, 400),
-		Parent = ui.rightPanel,
-	})
-	
-	-- Função para criar campo de propriedade
-	local function createPropertyField(name, value, yPos, parent)
-		local label = Make("TextLabel", {
-			Name = name .. "Label",
-			Text = name .. ":",
-			Font = FONT_SETTINGS.Font,
-			TextSize = 11,
-			TextColor3 = COLORS.TextDark,
-			BackgroundTransparency = 1,
-			Size = UDim2.new(0, 80, 0, 18),
-			Position = UDim2.new(0, 4, 0, yPos),
-			TextXAlignment = Enum.TextXAlignment.Left,
-			Parent = parent,
-		})
-		
-		local input = Make("TextBox", {
-			Name = name .. "Input",
-			Text = tostring(value),
-			Font = FONT_SETTINGS.Font,
-			TextSize = 11,
-			TextColor3 = COLORS.Text,
-			BackgroundColor3 = COLORS.InputBg,
-			BorderColor3 = COLORS.Border,
-			BorderSizePixel = 1,
-			Size = UDim2.new(1, -88, 0, 18),
-			Position = UDim2.new(0, 84, 0, yPos),
-			ClearTextOnFocus = false,
-			Parent = parent,
-		})
-		
-		return input
+
+	local function field(label, value, y)
+		Make("TextLabel", { Text = label, Font = FONT, TextSize = px(11), TextColor3 = COLORS.TextDark, BackgroundTransparency = 1, Size = UDim2.new(0.45, 0, 0, px(18)), Position = UDim2.new(0, 4, 0, y), Parent = scroll })
+		Make("TextLabel", { Text = tostring(value), Font = FONT_MONO, TextSize = px(11), TextColor3 = COLORS.Text, BackgroundTransparency = 1, Size = UDim2.new(0.55, -4, 0, px(18)), Position = UDim2.new(0.45, 0, 0, y), Parent = scroll })
 	end
-	
-	-- Função para atualizar painel de propriedades
-	local function updateProperties()
-		-- Limpa campos antigos
-		for _, child in ipairs(propsScroll:GetChildren()) do
-			child:Destroy()
-		end
-		
-		local selectedKf = _G.selectedKeyframe
-		local selectedPose = nil
-		
-		if selectedKf and selectedKf.Poses and _G.partSelection then
-			selectedPose = selectedKf.Poses[_G.partSelection.Item]
-		end
-		
-		local yOffset = 4
-		
-		-- Seção: Keyframe Info
-		Make("TextLabel", {
-			Name = "Section_Keyframe",
-			Text = "─ Keyframe ─",
-			Font = FONT_SETTINGS.FontBold,
-			TextSize = 11,
-			TextColor3 = COLORS.Text,
-			BackgroundTransparency = 1,
-			Size = UDim2.new(1, -8, 0, 16),
-			Position = UDim2.new(0, 4, 0, yOffset),
-			TextXAlignment = Enum.TextXAlignment.Center,
-			Parent = propsScroll,
-		})
-		yOffset = yOffset + 20
-		
-		if selectedKf then
-			createPropertyField("Frame", selectedKf.Time or 0, yOffset, propsScroll)
-			yOffset = yOffset + 22
-			createPropertyField("Time", string.format("%.3f", selectedKf.Time or 0), yOffset, propsScroll)
-			yOffset = yOffset + 22
-			createPropertyField("Name", selectedKf.Name or "Keyframe", yOffset, propsScroll)
-			yOffset = yOffset + 26
+
+	local function refreshProperties()
+		for _, c in ipairs(scroll:GetChildren()) do c:Destroy() end
+		local y = px(4)
+		field("Frame", State.currentTime, y); y += px(20)
+		field("Length", State.animationLength, y); y += px(20)
+		field("FPS", math.floor(1 / State.frameStep), y); y += px(20)
+		field("Priority", State.animationPriority, y); y += px(26)
+
+		if State.selectedNode then
+			local part = State.selectedNode.Part
+			field("Part", part.Name, y); y += px(20)
+			local kf = Editor.getKeyframe(State.currentTime)
+			local pose = kf and kf.Poses[part]
+			if pose then
+				local pos = pose.CFrame.Position
+				field("Pos X", string.format("%.2f", pos.X), y); y += px(18)
+				field("Pos Y", string.format("%.2f", pos.Y), y); y += px(18)
+				field("Pos Z", string.format("%.2f", pos.Z), y); y += px(18)
+
+				local easingBtn = Make("TextButton", {
+					Text = "Easing: " .. (pose.EasingStyle and pose.EasingStyle.Name or "Linear"),
+					Size = UDim2.new(1, -8, 0, px(24)), Position = UDim2.new(0, 4, 0, y), Parent = scroll,
+				})
+				styleButton(easingBtn)
+				easingBtn.MouseButton1Click:Connect(function()
+					local styles = { "Linear", "Constant", "Cubic", "CubicV2", "Elastic", "Bounce" }
+					local options = {}
+					for _, s in ipairs(styles) do
+						table.insert(options, { label = s, callback = function()
+							pose.EasingStyle = Enum.PoseEasingStyle[s]
+							refreshProperties()
+						end })
+					end
+					showContextMenu(options, Vector2.new(mouse.X, mouse.Y))
+				end)
+				y += px(30)
+			else
+				field("Pose", "sem keyframe aqui", y); y += px(20)
+			end
 		else
-			Make("TextLabel", {
-				Name = "NoKeyframe",
-				Text = "No keyframe selected",
-				Font = FONT_SETTINGS.Font,
-				TextSize = 11,
-				TextColor3 = COLORS.TextDark,
-				BackgroundTransparency = 1,
-				Size = UDim2.new(1, -8, 0, 18),
-				Position = UDim2.new(0, 4, 0, yOffset),
-				TextXAlignment = Enum.TextXAlignment.Center,
-				Parent = propsScroll,
-			})
-			yOffset = yOffset + 22
+			field("Seleção", "nenhuma parte", y); y += px(20)
 		end
-		
-		-- Separador
-		yOffset = yOffset + 4
-		Make("Frame", {
-			Name = "Separator1",
-			BackgroundColor3 = COLORS.Separator,
-			BorderSizePixel = 0,
-			Size = UDim2.new(1, -8, 0, 1),
-			Position = UDim2.new(0, 4, 0, yOffset),
-			Parent = propsScroll,
-		})
-		yOffset = yOffset + 8
-		
-		-- Seção: Pose
-		Make("TextLabel", {
-			Name = "Section_Pose",
-			Text = "─ Pose ─",
-			Font = FONT_SETTINGS.FontBold,
-			TextSize = 11,
-			TextColor3 = COLORS.Text,
-			BackgroundTransparency = 1,
-			Size = UDim2.new(1, -8, 0, 16),
-			Position = UDim2.new(0, 4, 0, yOffset),
-			TextXAlignment = Enum.TextXAlignment.Center,
-			Parent = propsScroll,
-		})
-		yOffset = yOffset + 20
-		
-		if selectedPose then
-			-- Parte
-			local partName = selectedPose.Item and selectedPose.Item.Name or "Unknown"
-			createPropertyField("Part", partName, yOffset, propsScroll)
-			yOffset = yOffset + 22
-			
-			-- Posição (CFrame simplificado)
-			local cf = selectedPose.CFrame or CFrame.new()
-			local pos = cf.Position
-			createPropertyField("Pos X", string.format("%.3f", pos.X), yOffset, propsScroll)
-			yOffset = yOffset + 22
-			createPropertyField("Pos Y", string.format("%.3f", pos.Y), yOffset, propsScroll)
-			yOffset = yOffset + 22
-			createPropertyField("Pos Z", string.format("%.3f", pos.Z), yOffset, propsScroll)
-			yOffset = yOffset + 22
-			
-			-- Rotação (Euler angles aproximados)
-			local rx, ry, rz = cf:ToEulerAnglesXYZ()
-			createPropertyField("Rot X", string.format("%.1f", math.deg(rx)), yOffset, propsScroll)
-			yOffset = yOffset + 22
-			createPropertyField("Rot Y", string.format("%.1f", math.deg(ry)), yOffset, propsScroll)
-			yOffset = yOffset + 22
-			createPropertyField("Rot Z", string.format("%.1f", math.deg(rz)), yOffset, propsScroll)
-			yOffset = yOffset + 26
-			
-			-- Easing
-			local easingStyle = selectedPose.EasingStyle and selectedPose.EasingStyle.Name or "Linear"
-			local easingDir = selectedPose.EasingDirection and selectedPose.EasingDirection.Name or "Out"
-			
-			-- Dropdown de Easing Style
-			Make("TextLabel", {
-				Name = "EasingStyleLabel",
-				Text = "Easing Style:",
-				Font = FONT_SETTINGS.Font,
-				TextSize = 11,
-				TextColor3 = COLORS.TextDark,
-				BackgroundTransparency = 1,
-				Size = UDim2.new(0, 80, 0, 18),
-				Position = UDim2.new(0, 4, 0, yOffset),
-				TextXAlignment = Enum.TextXAlignment.Left,
-				Parent = propsScroll,
-			})
-			
-			local easingStyleBtn = Make("TextButton", {
-				Name = "EasingStyleBtn",
-				Text = easingStyle,
-				Font = FONT_SETTINGS.Font,
-				TextSize = 11,
-				TextColor3 = COLORS.Text,
-				BackgroundColor3 = COLORS.ButtonOff,
-				BorderColor3 = COLORS.Border,
-				BorderSizePixel = 1,
-				Size = UDim2.new(1, -88, 0, 18),
-				Position = UDim2.new(0, 84, 0, yOffset),
-				Parent = propsScroll,
-			})
-			styleButton(easingStyleBtn)
-			
-			easingStyleBtn.MouseButton1Click:Connect(function()
-				local styles = {"Linear", "Constant", "Cubic", "CubicV2", "Elastic", "Bounce"}
-				local options = {}
-				for _, style in ipairs(styles) do
-					table.insert(options, {
-						name = style,
-						label = style,
-						callback = function()
-							selectedPose.EasingStyle = Enum.PoseEasingStyle[style]
-							if selectedPose.updateColor then selectedPose.updateColor() end
-							updateProperties()
-						end
-					})
-				end
-				local pos = easingStyleBtn.AbsolutePosition
-				showContextMenu(options, Vector2.new(pos.X, pos.Y + easingStyleBtn.AbsoluteSize.Y))
-			end)
-			
-			yOffset = yOffset + 22
-			
-			-- Dropdown de Easing Direction
-			Make("TextLabel", {
-				Name = "EasingDirLabel",
-				Text = "Direction:",
-				Font = FONT_SETTINGS.Font,
-				TextSize = 11,
-				TextColor3 = COLORS.TextDark,
-				BackgroundTransparency = 1,
-				Size = UDim2.new(0, 80, 0, 18),
-				Position = UDim2.new(0, 4, 0, yOffset),
-				TextXAlignment = Enum.TextXAlignment.Left,
-				Parent = propsScroll,
-			})
-			
-			local easingDirBtn = Make("TextButton", {
-				Name = "EasingDirBtn",
-				Text = easingDir,
-				Font = FONT_SETTINGS.Font,
-				TextSize = 11,
-				TextColor3 = COLORS.Text,
-				BackgroundColor3 = COLORS.ButtonOff,
-				BorderColor3 = COLORS.Border,
-				BorderSizePixel = 1,
-				Size = UDim2.new(1, -88, 0, 18),
-				Position = UDim2.new(0, 84, 0, yOffset),
-				Parent = propsScroll,
-			})
-			styleButton(easingDirBtn)
-			
-			easingDirBtn.MouseButton1Click:Connect(function()
-				local dirs = {"In", "Out", "InOut"}
-				local options = {}
-				for _, dir in ipairs(dirs) do
-					table.insert(options, {
-						name = dir,
-						label = dir,
-						callback = function()
-							selectedPose.EasingDirection = Enum.PoseEasingDirection[dir]
-							if selectedPose.updateColor then selectedPose.updateColor() end
-							updateProperties()
-						end
-					})
-				end
-				local pos = easingDirBtn.AbsolutePosition
-				showContextMenu(options, Vector2.new(pos.X, pos.Y + easingDirBtn.AbsoluteSize.Y))
-			end)
-			
-			yOffset = yOffset + 22
-			
-			-- Peso
-			createPropertyField("Weight", tostring(selectedPose.Weight or 1), yOffset, propsScroll)
-			yOffset = yOffset + 22
-			
-		else
-			Make("TextLabel", {
-				Name = "NoPose",
-				Text = "No pose selected",
-				Font = FONT_SETTINGS.Font,
-				TextSize = 11,
-				TextColor3 = COLORS.TextDark,
-				BackgroundTransparency = 1,
-				Size = UDim2.new(1, -8, 0, 18),
-				Position = UDim2.new(0, 4, 0, yOffset),
-				TextXAlignment = Enum.TextXAlignment.Center,
-				Parent = propsScroll,
-			})
-			yOffset = yOffset + 22
-		end
-		
-		-- Separador
-		yOffset = yOffset + 4
-		Make("Frame", {
-			Name = "Separator2",
-			BackgroundColor3 = COLORS.Separator,
-			BorderSizePixel = 0,
-			Size = UDim2.new(1, -8, 0, 1),
-			Position = UDim2.new(0, 4, 0, yOffset),
-			Parent = propsScroll,
-		})
-		yOffset = yOffset + 8
-		
-		-- Seção: Animation
-		Make("TextLabel", {
-			Name = "Section_Animation",
-			Text = "─ Animation ─",
-			Font = FONT_SETTINGS.FontBold,
-			TextSize = 11,
-			TextColor3 = COLORS.Text,
-			BackgroundTransparency = 1,
-			Size = UDim2.new(1, -8, 0, 16),
-			Position = UDim2.new(0, 4, 0, yOffset),
-			TextXAlignment = Enum.TextXAlignment.Center,
-			Parent = propsScroll,
-		})
-		yOffset = yOffset + 20
-		
-		createPropertyField("Length", tostring(uiState.animationLength), yOffset, propsScroll)
-		yOffset = yOffset + 22
-		createPropertyField("Framerate", tostring(_G.animationFramerate or 0.05), yOffset, propsScroll)
-		yOffset = yOffset + 22
-		createPropertyField("Priority", _G.animationPriority or "Core", yOffset, propsScroll)
-		yOffset = yOffset + 22
-		createPropertyField("Looping", tostring(_G.loopAnimation or false), yOffset, propsScroll)
-		yOffset = yOffset + 22
-		
-		propsScroll.CanvasSize = UDim2.new(1, 0, 0, yOffset + 10)
+
+		scroll.CanvasSize = UDim2.new(0, 0, 0, y + px(10))
 	end
-	
-	-- Expõe função
-	ui.updateProperties = updateProperties
-	
-	-- Atualiza quando selecionar keyframe/pose
-	-- (Chamado pelo sistema de animação)
+	ui.updateProperties = refreshProperties
+	Editor.onSelectionChanged(refreshProperties)
 end
 
--- ============================================================================
--- SEÇÃO 15: BARRA DE PLAYBACK INFERIOR
--- ============================================================================
+-- ---- Playback bar --------------------------------------------------------
 
 local function createPlaybackBar()
 	ui.playbackBar = Make("Frame", {
-		Name = "PlaybackBar",
-		BackgroundColor3 = COLORS.Panel,
-		BorderColor3 = COLORS.Border,
-		BorderSizePixel = 1,
-		Size = UDim2.new(1, 0, 0, WINDOW.PlaybackHeight),
-		Position = UDim2.new(0, 0, 1, -WINDOW.PlaybackHeight),
-		Parent = ui.mainWindow,
+		Name = "PlaybackBar", BackgroundColor3 = COLORS.Panel, BorderColor3 = COLORS.Border, BorderSizePixel = 1,
+		Size = UDim2.new(1, 0, 0, LAYOUT.PlaybackHeight), Position = UDim2.new(0, 0, 1, -LAYOUT.PlaybackHeight), Parent = ui.mainWindow,
 	})
-	
-	-- Botões de navegação
-	local navButtons = {
-		{name = "first_frame", label = "|◀", tooltip = "First Frame"},
-		{name = "prev_frame", label = "◀", tooltip = "Previous Frame"},
-		{name = "play_pause", label = "▶", tooltip = "Play / Pause"},
-		{name = "stop", label = "⏹", tooltip = "Stop"},
-		{name = "next_frame", label = "▶", tooltip = "Next Frame"},
-		{name = "last_frame", label = "▶|", tooltip = "Last Frame"},
-	}
-	
-	local xOffset = 5
-	for _, btnData in ipairs(navButtons) do
-		local btn = Make("TextButton", {
-			Name = btnData.name .. "Btn",
-			Text = btnData.label,
-			Font = FONT_SETTINGS.FontBold,
-			TextSize = 12,
-			TextColor3 = COLORS.Text,
-			BackgroundColor3 = COLORS.ButtonOff,
-			BorderColor3 = COLORS.Border,
-			BorderSizePixel = 1,
-			Size = UDim2.new(0, 28, 0, 24),
-			Position = UDim2.new(0, xOffset, 0, 4),
-			Parent = ui.playbackBar,
-		})
-		styleButton(btn)
-		attachTooltip(btn, btnData.tooltip)
-		
-		btn.MouseButton1Click:Connect(function()
-			if btnData.name == "first_frame" then
-				uiState.currentTime = 0
-				if _G.currentTime ~= nil then _G.currentTime = 0 end
-				if _G.updateCursorPosition then _G.updateCursorPosition() end
-			elseif btnData.name == "prev_frame" then
-				local step = _G.animationFramerate or 0.05
-				uiState.currentTime = math.max(0, uiState.currentTime - step)
-				if _G.currentTime ~= nil then _G.currentTime = uiState.currentTime end
-				if _G.updateCursorPosition then _G.updateCursorPosition() end
-			elseif btnData.name == "play_pause" then
-				uiState.isPlaying = not uiState.isPlaying
-				btn.Text = uiState.isPlaying and "⏸" or "▶"
-				if uiState.isPlaying then
-					if _G.playCurrentAnimation then _G.playCurrentAnimation() end
-				end
-			elseif btnData.name == "stop" then
-				uiState.isPlaying = false
-				uiState.currentTime = 0
-				if _G.currentTime ~= nil then _G.currentTime = 0 end
-				if _G.stopAnim ~= nil then _G.stopAnim = true end
-				if _G.updateCursorPosition then _G.updateCursorPosition() end
-				-- Reseta botão play
-				local playBtn = ui.playbackBar:FindFirstChild("play_pauseBtn")
-				if playBtn then playBtn.Text = "▶" end
-			elseif btnData.name == "next_frame" then
-				local step = _G.animationFramerate or 0.05
-				uiState.currentTime = math.min(uiState.animationLength, uiState.currentTime + step)
-				if _G.currentTime ~= nil then _G.currentTime = uiState.currentTime end
-				if _G.updateCursorPosition then _G.updateCursorPosition() end
-			elseif btnData.name == "last_frame" then
-				uiState.currentTime = uiState.animationLength
-				if _G.currentTime ~= nil then _G.currentTime = uiState.animationLength end
-				if _G.updateCursorPosition then _G.updateCursorPosition() end
-			end
-		end)
-		
-		xOffset = xOffset + 30
+
+	local btnSize = px(34)
+	local x = px(4)
+	local function navBtn(label, callback)
+		local b = Make("TextButton", { Text = label, Size = UDim2.new(0, btnSize, 0, btnSize), Position = UDim2.new(0, x, 0, (LAYOUT.PlaybackHeight - btnSize) / 2), Parent = ui.playbackBar })
+		styleButton(b)
+		b.MouseButton1Click:Connect(callback)
+		x += btnSize + px(4)
+		return b
 	end
-	
-	-- Slider de tempo
-	local timeSlider = Make("Frame", {
-		Name = "TimeSlider",
-		BackgroundColor3 = COLORS.PanelDark,
-		BorderColor3 = COLORS.Border,
-		BorderSizePixel = 1,
-		Size = UDim2.new(0, 200, 0, 16),
-		Position = UDim2.new(0, xOffset + 10, 0, 8),
-		Parent = ui.playbackBar,
-	})
-	
-	local sliderFill = Make("Frame", {
-		Name = "SliderFill",
-		BackgroundColor3 = COLORS.Accent,
-		BorderSizePixel = 0,
-		Size = UDim2.new(0, 0, 1, 0),
-		Position = UDim2.new(0, 0, 0, 0),
-		Parent = timeSlider,
-	})
-	
-	-- Label de tempo atual
+
+	navBtn("|<", function() State.currentTime = 0; Editor.updateCursorPosition(); ui.refresh() end)
+	navBtn("<", function() State.currentTime = math.max(0, State.currentTime - State.frameStep); Editor.updateCursorPosition(); ui.refresh() end)
+	local playBtn = navBtn(">", function()
+		if State.playing then Editor.stop() else Editor.play() end
+	end)
+	navBtn(">", function() State.currentTime = math.min(State.animationLength, State.currentTime + State.frameStep); Editor.updateCursorPosition(); ui.refresh() end)
+	navBtn(">|", function() State.currentTime = State.animationLength; Editor.updateCursorPosition(); ui.refresh() end)
+
 	local timeLabel = Make("TextLabel", {
-		Name = "TimeLabel",
-		Text = "0.00 / 2.00",
-		Font = FONT_SETTINGS.Font,
-		TextSize = 11,
-		TextColor3 = COLORS.Text,
-		BackgroundTransparency = 1,
-		Size = UDim2.new(0, 100, 0, 20),
-		Position = UDim2.new(0, xOffset + 220, 0, 6),
-		TextXAlignment = Enum.TextXAlignment.Left,
-		Parent = ui.playbackBar,
+		Text = "0.00 / 2.00", Font = FONT_MONO, TextSize = px(12), TextColor3 = COLORS.Text, BackgroundTransparency = 1,
+		Size = UDim2.new(0, px(120), 1, 0), Position = UDim2.new(0, x + px(6), 0, 0), Parent = ui.playbackBar,
 	})
-	
-	-- Atualiza label
-	local function updateTimeLabel()
-		local current = uiState.currentTime or 0
-		local total = uiState.animationLength or 2
-		timeLabel.Text = string.format("%.2f / %.2f", current, total)
-		
-		-- Atualiza slider
-		local pct = total > 0 and current / total or 0
-		sliderFill.Size = UDim2.new(0, pct * timeSlider.AbsoluteSize.X, 1, 0)
+
+	-- Botões de gaveta (só aparecem no mobile) pra abrir/fechar os painéis
+	if IS_SMALL_SCREEN then
+		local partsBtn = Make("TextButton", { Text = "Parts", Size = UDim2.new(0, px(60), 0, btnSize), Position = UDim2.new(1, -px(190), 0, (LAYOUT.PlaybackHeight - btnSize) / 2), Parent = ui.playbackBar })
+		styleButton(partsBtn)
+		partsBtn.MouseButton1Click:Connect(function() ui.leftPanel.Visible = not ui.leftPanel.Visible; ui.rightPanel.Visible = false end)
+
+		local propsBtn = Make("TextButton", { Text = "Props", Size = UDim2.new(0, px(60), 0, btnSize), Position = UDim2.new(1, -px(125), 0, (LAYOUT.PlaybackHeight - btnSize) / 2), Parent = ui.playbackBar })
+		styleButton(propsBtn)
+		propsBtn.MouseButton1Click:Connect(function() ui.rightPanel.Visible = not ui.rightPanel.Visible; ui.leftPanel.Visible = false end)
 	end
-	
-	ui.updateTimeLabel = updateTimeLabel
-	
-	-- FPS / Speed
-	Make("TextLabel", {
-		Name = "FPSLabel",
-		Text = "FPS:",
-		Font = FONT_SETTINGS.Font,
-		TextSize = 11,
-		TextColor3 = COLORS.TextDark,
-		BackgroundTransparency = 1,
-		Size = UDim2.new(0, 30, 0, 20),
-		Position = UDim2.new(0, xOffset + 330, 0, 6),
-		TextXAlignment = Enum.TextXAlignment.Left,
-		Parent = ui.playbackBar,
-	})
-	
-	local fpsValue = Make("TextLabel", {
-		Name = "FPSValue",
-		Text = "60",
-		Font = FONT_SETTINGS.Font,
-		TextSize = 11,
-		TextColor3 = COLORS.Text,
-		BackgroundTransparency = 1,
-		Size = UDim2.new(0, 25, 0, 20),
-		Position = UDim2.new(0, xOffset + 360, 0, 6),
-		TextXAlignment = Enum.TextXAlignment.Left,
-		Parent = ui.playbackBar,
-	})
-	
-	-- Speed
-	Make("TextLabel", {
-		Name = "SpeedLabel",
-		Text = "Speed:",
-		Font = FONT_SETTINGS.Font,
-		TextSize = 11,
-		TextColor3 = COLORS.TextDark,
-		BackgroundTransparency = 1,
-		Size = UDim2.new(0, 40, 0, 20),
-		Position = UDim2.new(0, xOffset + 390, 0, 6),
-		TextXAlignment = Enum.TextXAlignment.Left,
-		Parent = ui.playbackBar,
-	})
-	
-	local speedValue = Make("TextLabel", {
-		Name = "SpeedValue",
-		Text = "1.0x",
-		Font = FONT_SETTINGS.Font,
-		TextSize = 11,
-		TextColor3 = COLORS.Text,
-		BackgroundTransparency = 1,
-		Size = UDim2.new(0, 35, 0, 20),
-		Position = UDim2.new(0, xOffset + 430, 0, 6),
-		TextXAlignment = Enum.TextXAlignment.Left,
-		Parent = ui.playbackBar,
-	})
-	
-	-- Loop toggle na playback bar
-	local loopToggle = Make("TextButton", {
-		Name = "LoopToggle",
-		Text = "Loop",
-		Font = FONT_SETTINGS.Font,
-		TextSize = 11,
-		TextColor3 = COLORS.Text,
-		BackgroundColor3 = COLORS.ButtonOff,
-		BorderColor3 = COLORS.Border,
-		BorderSizePixel = 1,
-		Size = UDim2.new(0, 45, 0, 22),
-		Position = UDim2.new(1, -50, 0, 5),
-		Parent = ui.playbackBar,
-	})
-	styleButton(loopToggle, true)
-	loopToggle:SetAttribute("Selected", _G.loopAnimation or false)
-	loopToggle.MouseButton1Click:Connect(function()
-		uiState.isLooping = not uiState.isLooping
-		if _G.loopAnimation ~= nil then _G.loopAnimation = uiState.isLooping end
-		loopToggle:SetAttribute("Selected", uiState.isLooping)
-	end)
+
+	local fitBtn = Make("TextButton", { Text = "Fit", Size = UDim2.new(0, px(50), 0, btnSize), Position = UDim2.new(1, -px(60), 0, (LAYOUT.PlaybackHeight - btnSize) / 2), Parent = ui.playbackBar })
+	styleButton(fitBtn)
+	fitBtn.MouseButton1Click:Connect(function() if ui.zoomToFit then ui.zoomToFit() end end)
+
+	ui.updateTimeLabel = function()
+		timeLabel.Text = string.format("%.2f / %.2f", State.currentTime, State.animationLength)
+		playBtn.Text = State.playing and "||" or ">"
+	end
+end
+
+-- ---- Refresh geral ---------------------------------------------------------
+
+function ui.refresh()
+	if ui.refreshPartList then ui.refreshPartList() end
+	if ui.refreshTimeline then ui.refreshTimeline() end
+	if ui.updateProperties then ui.updateProperties() end
+	if ui.updateTimeLabel then ui.updateTimeLabel() end
 end
 
 -- ============================================================================
--- SEÇÃO 16: STATUS BAR
+-- SEÇÃO 11: SELEÇÃO POR TOQUE/CLIQUE NO VIEWPORT
 -- ============================================================================
 
-local function createStatusBar()
-	ui.statusBar = Make("Frame", {
-		Name = "StatusBar",
-		BackgroundColor3 = COLORS.Panel,
-		BorderColor3 = COLORS.Border,
-		BorderSizePixel = 1,
-		Size = UDim2.new(1, 0, 0, 18),
-		Position = UDim2.new(0, 0, 1, -18),
-		Parent = ui.mainWindow,
-		Visible = false, -- Oculto por padrão, playback bar já ocupa espaço
-	})
-	
-	Make("TextLabel", {
-		Name = "StatusText",
-		Text = "Ready",
-		Font = FONT_SETTINGS.Font,
-		TextSize = 10,
-		TextColor3 = COLORS.TextDark,
-		BackgroundTransparency = 1,
-		Size = UDim2.new(1, -10, 1, 0),
-		Position = UDim2.new(0, 5, 0, 0),
-		TextXAlignment = Enum.TextXAlignment.Left,
-		Parent = ui.statusBar,
-	})
-end
-
--- ============================================================================
--- SEÇÃO 17: ATALHOS DE TECLADO
--- ============================================================================
-
-local function setupKeyboardShortcuts()
-	UserInputService.InputBegan:Connect(function(input, gameProcessed)
-		if gameProcessed then return end
-		if uiState.modal then return end
-		
-		local key = input.KeyCode
-		
-		-- Ctrl+S = Save
-		if key == Enum.KeyCode.S and UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
-			if _G.PromptSave then _G.PromptSave() end
-			
-		-- Ctrl+O = Open
-		elseif key == Enum.KeyCode.O and UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
-			if _G.PromptLoad then _G.PromptLoad() end
-			
-		-- Ctrl+N = New
-		elseif key == Enum.KeyCode.N and UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
-			if _G.promptNew then _G.promptNew() end
-			
-		-- Ctrl+Z = Undo
-		elseif key == Enum.KeyCode.Z and UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
-			if _G.undo then _G.undo() end
-			
-		-- Ctrl+Y = Redo
-		elseif key == Enum.KeyCode.Y and UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
-			if _G.redo then _G.redo() end
-			
-		-- Space = Play/Pause
-		elseif key == Enum.KeyCode.Space then
-			uiState.isPlaying = not uiState.isPlaying
-			if uiState.isPlaying then
-				if _G.playCurrentAnimation then _G.playCurrentAnimation() end
-			else
-				if _G.stopAnim ~= nil then _G.stopAnim = true end
-			end
-			
-		-- Delete = Delete Keyframe
-		elseif key == Enum.KeyCode.Delete then
-			if _G.selectedKeyframe and _G.deleteKeyframe then
-				_G.deleteKeyframe(_G.selectedKeyframe.Time, true)
-			end
-			
-		-- K = Add Keyframe
-		elseif key == Enum.KeyCode.K then
-			if _G.createKeyframe then
-				_G.createKeyframe(uiState.currentTime, true)
-			end
-			
-		-- Setas = Navegar frames
-		elseif key == Enum.KeyCode.Left then
-			local step = _G.animationFramerate or 0.05
-			uiState.currentTime = math.max(0, uiState.currentTime - step)
-			if _G.currentTime ~= nil then _G.currentTime = uiState.currentTime end
-			if _G.updateCursorPosition then _G.updateCursorPosition() end
-			
-		elseif key == Enum.KeyCode.Right then
-			local step = _G.animationFramerate or 0.05
-			uiState.currentTime = math.min(uiState.animationLength, uiState.currentTime + step)
-			if _G.currentTime ~= nil then _G.currentTime = uiState.currentTime end
-			if _G.updateCursorPosition then _G.updateCursorPosition() end
+local function setupViewportSelection()
+	local function tryHandle(input)
+		if State.modal then return end
+		local guiInset = game:GetService("GuiService"):GetGuiInset()
+		local x, y = input.Position.X, input.Position.Y - guiInset.Y
+		local node = raycastToPart(x, y)
+		if node then Editor.select(node) end
+	end
+	UserInputService.InputBegan:Connect(function(input, processed)
+		if processed then return end
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			tryHandle(input)
 		end
 	end)
 end
 
 -- ============================================================================
--- SEÇÃO 18: INTEGRAÇÃO COM SISTEMA EXISTENTE
+-- SEÇÃO 12: HOOKS DE ATUALIZAÇÃO CRUZADA
 -- ============================================================================
 
-local function integrateWithExistingSystem()
-	--[[
-		Esta função conecta a UI às variáveis e funções globais já existentes
-		do sistema de animação. Não recria nenhuma lógica.
-	]]
-	
-	-- Sincroniza variáveis globais
-	if _G.animationLength then
-		uiState.animationLength = _G.animationLength
-	end
-	
-	if _G.currentTime then
-		uiState.currentTime = _G.currentTime
-	end
-	
-	if _G.loopAnimation ~= nil then
-		uiState.isLooping = _G.loopAnimation
-	end
-	
-	if _G.rotateMode ~= nil then
-		uiState.selectedTool = _G.rotateMode and "rotate" or "move"
-	end
-	
-	if _G.rotateStep then
-		uiState.rotateStep = _G.rotateStep
-	end
-	
-	if _G.moveStep then
-		uiState.moveStep = _G.moveStep
-	end
-	
-	-- Conecta eventos de atualização
-	-- (O sistema existente deve chamar estas funções quando dados mudam)
-	
-	-- Hook para updateCursorPosition existente
-	if _G.updateCursorPosition then
-		local originalUpdateCursor = _G.updateCursorPosition
-		_G.updateCursorPosition = function(...)
-			originalUpdateCursor(...)
-			-- Atualiza UI
-			if ui.updateTimeLabel then
-				ui.updateTimeLabel()
-			end
-		end
-	end
-	
-	-- Hook para createKeyframe
-	if _G.createKeyframe then
-		local originalCreateKeyframe = _G.createKeyframe
-		_G.createKeyframe = function(...)
-			local result = originalCreateKeyframe(...)
-			if ui.refreshTimeline then
-				ui.refreshTimeline()
-			end
-			return result
-		end
-	end
-	
-	-- Hook para deleteKeyframe
-	if _G.deleteKeyframe then
-		local originalDeleteKeyframe = _G.deleteKeyframe
-		_G.deleteKeyframe = function(...)
-			originalDeleteKeyframe(...)
-			if ui.refreshTimeline then
-				ui.refreshTimeline()
-			end
-		end
-	end
-	
-	-- Hook para moveKeyframe
-	if _G.moveKeyframe then
-		local originalMoveKeyframe = _G.moveKeyframe
-		_G.moveKeyframe = function(...)
-			originalMoveKeyframe(...)
-			if ui.refreshTimeline then
-				ui.refreshTimeline()
-			end
-		end
-	end
-	
-	-- Hook para selectPartUI
-	if _G.selectPartUI then
-		local originalSelectPartUI = _G.selectPartUI
-		_G.selectPartUI = function(part)
-			originalSelectPartUI(part)
-			if ui.updateProperties then
-				ui.updateProperties()
-			end
-		end
-	end
-	
-	-- Hook para setHandleSelection
-	if _G.setHandleSelection then
-		local originalSetHandle = _G.setHandleSelection
-		_G.setHandleSelection = function(item)
-			originalSetHandle(item)
-			if ui.updateProperties then
-				ui.updateProperties()
-			end
-		end
-	end
-	
-	-- Hook para resetHandleSelection
-	if _G.resetHandleSelection then
-		local originalResetHandle = _G.resetHandleSelection
-		_G.resetHandleSelection = function()
-			originalResetHandle()
-			if ui.updateProperties then
-				ui.updateProperties()
-			end
-		end
-	end
-end
+State.onRefresh = function() ui.refresh() end
+State.onCursorUpdate = function() if ui.updateTimeLabel then ui.updateTimeLabel() end end
+
+Editor.onSelectionChanged(function(node)
+	if ui.setActiveTool then ui.setActiveTool(State.currentTool) end
+end)
 
 -- ============================================================================
--- SEÇÃO 19: INICIALIZAÇÃO
+-- SEÇÃO 13: BUILD DA UI + INICIALIZAÇÃO
 -- ============================================================================
 
-local function initialize()
-	-- Cria a janela principal
-	createMainWindow()
-	
-	-- Cria todos os componentes
+function Editor.buildUI(screenGui)
+	createMainWindow(screenGui)
 	createTitleBar()
-	createMenuBar()
 	createToolbar()
 	createLeftPanel()
 	createTimeline()
+	createTouchpad()
 	createRightPanel()
 	createPlaybackBar()
-	createStatusBar()
-	createTooltipSystem()
-	
-	-- Configura atalhos
-	setupKeyboardShortcuts()
-	
-	-- Integra com sistema existente
-	integrateWithExistingSystem()
-	
-	-- Expõe referências da UI para o sistema
-	_G.timelineUI = ui.mainWindow
-	_G.saveUI = nil -- Criado sob demanda
-	_G.loadUI = nil -- Criado sob demanda
-	_G.stopAnimUI = nil -- Criado sob demanda
-	_G.timeChangeUI = nil -- Criado sob demanda
-	
-	-- Marca como inicializado
-	print("[AnimationEditor UI] Interface inicializada com sucesso.")
-	print("[AnimationEditor UI] Conectado ao sistema de animação existente.")
+	setupViewportSelection()
+	ui.refresh()
 end
 
--- ============================================================================
--- SEÇÃO 20: EXECUÇÃO
--- ============================================================================
-
--- Aguarda o sistema de animação estar pronto
-local function waitForAnimationSystem()
-	local maxAttempts = 50
-	local attempts = 0
-	
-	while attempts < maxAttempts do
-		if _G.Make and (_G.partList or _G.keyframeList) then
-			return true
-		end
-		attempts = attempts + 1
-		task.wait(0.1)
-	end
-	
-	warn("[AnimationEditor UI] Sistema de animação não detectado. Inicializando UI standalone.")
-	return false
+-- Cria a ScreenGui automaticamente se este script estiver solto numa
+-- ScreenGui (comportamento padrão); senão, use Editor.buildUI(minhaScreenGui).
+local hostScreenGui = script:FindFirstAncestorOfClass("ScreenGui")
+if not hostScreenGui then
+	hostScreenGui = Make("ScreenGui", { Name = "AnimationEditorGui", ResetOnSpawn = false, Parent = playerGui })
 end
 
--- Inicializa
-task.spawn(function()
-	waitForAnimationSystem()
-	initialize()
-end)
+if player.Character then
+	Editor.init(player.Character)
+end
 
---[[
-    ============================================================================
-    FIM DO SCRIPT
-    ============================================================================
-    
-    RESUMO DA ESTRUTURA CRIADA:
-    
-    ScreenGui
-    └── AnimationEditorWindow (Frame principal, arrastável, redimensionável)
-        ├── TitleBar (22px)
-        │   ├── MenuBar (File, Edit, View, Animation, Help)
-        │   ├── TitleText ("Animation Editor")
-        │   ├── MinimizeButton
-        │   ├── MaximizeButton
-        │   └── CloseButton
-        ├── Toolbar (28px)
-        │   ├── Grupo Arquivo: New, Open, Save, SaveAs, Export, Import
-        │   ├── Grupo Playback: Play, Pause, Stop, Loop
-        │   ├── Grupo Edição: Undo, Redo
-        │   ├── Grupo Ferramentas: Rotate, Move, Scale, Local, World, Snap, Interpolate
-        │   ├── Grupo Keyframe: +Kf, -Kf, Duplicate, Copy, Paste
-        │   └── Grupo Bone: +Bone, -Bone, Mirror, Reset
-        ├── LeftPanel (160px) - Lista de Partes
-        │   ├── Header ("Parts")
-        │   ├── SearchBox
-        │   └── PartListScroll (ScrollingFrame)
-        ├── TimelinePanel (centro)
-        │   ├── KeyframeContainer (ScrollingFrame)
-        │   │   ├── TimeListFrame (Régua de tempo)
-        │   │   ├── TimelineFrame (Área de keyframes)
-        │   │   ├── GridFrame (Grade + Poses)
-        │   │   └── Cursor (Arrastável, vermelho/azul)
-        │   ├── ZoomIn / ZoomOut
-        │   └── ZoomLabel
-        ├── RightPanel (200px) - Propriedades
-        │   ├── Header ("Properties")
-        │   └── PropertiesScroll
-        │       ├── Seção Keyframe (Frame, Time, Name)
-        │       ├── Seção Pose (Part, Pos, Rot, Easing, Weight)
-        │       └── Seção Animation (Length, Framerate, Priority, Loop)
-        ├── PlaybackBar (32px)
-        │   ├── First, Prev, Play/Pause, Stop, Next, Last
-        │   ├── TimeSlider + TimeLabel
-        │   ├── FPS, Speed
-        │   └── LoopToggle
-        ├── StatusBar (opcional)
-        │   └── StatusText
-        ├── Tooltip (overlay)
-        └── ContextMenu (overlay)
-    
-    TODAS AS FUNÇÕES DO SISTEMA EXISTENTE SÃO CHAMADAS, NUNCA REIMPLEMENTADAS.
-    
-    FUNÇÕES CHAMADAS:
-    - createKeyframe(), deleteKeyframe(), moveKeyframe()
-    - undo(), redo()
-    - copyPose(), pastePoses(), resetCopyPoseList()
-    - updateCursorPosition(), updateTimeLabels(), adjustKeyframes()
-    - selectPartUI(), unselectPartUI()
-    - setHandleSelection(), resetHandleSelection(), getHandleSelection()
-    - updateProxyPart()
-    - playCurrentAnimation()
-    - saveCurrentAnimation(), PromptSave(), PromptLoad()
-    - loadCurrentAnimation(), loadImportAnim()
-    - resetAnimation(), setAnimationLength()
-    - promptNew(), promptChangeLength(), promptTickChange()
-    - promptSnapChange(), promptAddTime(), promptRemoveTime()
-    - promptChangePriority(), promptChangeLooping()
-    - menuRequest(), exitPlugin()
-    - importFbxAnimation()
-    - keyframeContextMenu(), keyframePositionShift()
-    - displayDropDownMenu(), showTextEntryDialog(), showConfirmationDialog()
-    - initializePose(), deletePose()
-    - getKeyframe(), getKeyframeData(), getCurrentKeyframeData()
-    - getClosestPose(), getClosestNextPose()
-    - getMotorC1()
-    - lockUndoStep(), registerUndo()
-    - MenuHandler.SetEasingStyle()
-    
-    ============================================================================
-]]
+Editor.buildUI(hostScreenGui)
+
+_G.AnimationEditor = Editor -- opcional, pra debug via console
+return Editor
